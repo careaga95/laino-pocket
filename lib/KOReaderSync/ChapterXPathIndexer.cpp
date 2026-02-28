@@ -20,6 +20,7 @@ namespace {
 struct XPathAnchor {
   size_t textOffset = 0;
   std::string xpath;
+  std::string xpathNoIndex;  // precomputed removeIndices(xpath)
 };
 
 struct StackNode {
@@ -129,8 +130,7 @@ struct ParserState {
       bool found = false;
 
       for (const auto& anchor : anchors) {
-        const std::string normalizedAnchor = normalizeXPath(anchor.xpath);
-        const std::string anchorPath = ignoreIndices ? removeIndices(normalizedAnchor) : normalizedAnchor;
+        const std::string& anchorPath = ignoreIndices ? anchor.xpathNoIndex : anchor.xpath;
         if (anchorPath == probe) {
           const int depth = pathDepth(anchorPath);
           if (!found || depth > bestDepth || (depth == bestDepth && anchor.textOffset < bestOffset)) {
@@ -221,12 +221,13 @@ struct ParserState {
     }
 
     if (!stack.back().hasTextAnchor) {
-      anchors.push_back({totalTextBytes, currentXPath()});
+      const std::string xpath = currentXPath();
+      anchors.push_back({totalTextBytes, xpath, removeIndices(xpath)});
       stack.back().hasTextAnchor = true;
     } else if (anchors.empty() || totalTextBytes - anchors.back().textOffset >= 192) {
       const std::string xpath = currentXPath();
       if (anchors.empty() || anchors.back().xpath != xpath) {
-        anchors.push_back({totalTextBytes, xpath});
+        anchors.push_back({totalTextBytes, xpath, removeIndices(xpath)});
       }
     }
   }
@@ -358,6 +359,17 @@ void XMLCALL onCharacterData(void* userData, const XML_Char* text, const int len
 }
 
 void XMLCALL onDefaultHandlerExpand(void* userData, const XML_Char* text, const int len) {
+  // The default handler fires for comments, PIs, DOCTYPE, and entity references.
+  // Only forward entity references (&..;) to avoid skewing text offsets with
+  // non-visible markup.
+  if (len < 3 || text[0] != '&' || text[len - 1] != ';') {
+    return;
+  }
+  for (int i = 1; i < len - 1; ++i) {
+    if (text[i] == '<' || text[i] == '>') {
+      return;
+    }
+  }
   auto* state = static_cast<ParserState*>(userData);
   state->onCharacterData(text, len);
 }

@@ -68,7 +68,7 @@ class ProgressMapper {
  private:
   /**
    * Generate XPath for KOReader compatibility.
-   * Fallback format: /body/DocFragment[spineIndex]/body
+   * Fallback format: /body/DocFragment[spineIndex + 1]/body
    */
-  static std::string generateXPath(int spineIndex, int pageNumber, int totalPages);
+  static std::string generateXPath(int spineIndex);
 };

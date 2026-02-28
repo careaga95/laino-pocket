@@ -24,7 +24,7 @@ KOReaderPosition ProgressMapper::toKOReader(const std::shared_ptr<Epub>& epub, c
   // to a synthetic chapter-level path if parsing fails.
   result.xpath = ChapterXPathIndexer::findXPathForProgress(epub, pos.spineIndex, intraSpineProgress);
   if (result.xpath.empty()) {
-    result.xpath = generateXPath(pos.spineIndex, pos.pageNumber, pos.totalPages);
+    result.xpath = generateXPath(pos.spineIndex);
   }
 
   // Get chapter info for logging
@@ -150,7 +150,7 @@ CrossPointPosition ProgressMapper::toCrossPoint(const std::shared_ptr<Epub>& epu
   return result;
 }
 
-std::string ProgressMapper::generateXPath(int spineIndex, int pageNumber, int totalPages) {
+std::string ProgressMapper::generateXPath(int spineIndex) {
   // Fallback path when element-level XPath extraction is unavailable.
   // KOReader uses 1-based XPath predicates; spineIndex is 0-based internally.
   return "/body/DocFragment[" + std::to_string(spineIndex + 1) + "]/body";
