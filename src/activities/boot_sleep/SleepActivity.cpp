@@ -19,6 +19,8 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "images/Logo120.h"
+#include "util/StringUtils.h"
+
 
 namespace {
 
