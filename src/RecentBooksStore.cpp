@@ -122,8 +122,8 @@ bool RecentBooksStore::loadFromBinaryFile() {
     // Old version, just read paths
     uint8_t count;
     serialization::readPod(inputFile, count);
-    recentBooks.clear();
-    recentBooks.reserve(count);
+    std::vector<RecentBook> tmpRecentBooks;
+    tmpRecentBooks.reserve(count);
     for (uint8_t i = 0; i < count; i++) {
       std::string path;
       if (!serialization::readString(inputFile, path)) {
@@ -142,17 +142,18 @@ bool RecentBooksStore::loadFromBinaryFile() {
           inputFile.close();
           return false;
         }
-        recentBooks.push_back({path, title, author, "", ""});
+        tmpRecentBooks.push_back({path, title, author, "", ""});
       } else {
-        recentBooks.push_back(book);
+        tmpRecentBooks.push_back(book);
       }
     }
+    recentBooks = std::move(tmpRecentBooks);
   } else if (version == 3) {
     uint8_t count;
     serialization::readPod(inputFile, count);
 
-    recentBooks.clear();
-    recentBooks.reserve(count);
+    std::vector<RecentBook> tmpRecentBooks;
+    tmpRecentBooks.reserve(count);
     uint8_t omitted = 0;
 
     for (uint8_t i = 0; i < count; i++) {
@@ -170,8 +171,9 @@ bool RecentBooksStore::loadFromBinaryFile() {
         continue;
       }
 
-      recentBooks.push_back({path, title, author, "", coverBmpPath});
+      tmpRecentBooks.push_back({path, title, author, "", coverBmpPath});
     }
+    recentBooks = std::move(tmpRecentBooks);
 
     if (omitted > 0) {
       inputFile.close();

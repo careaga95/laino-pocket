@@ -267,18 +267,25 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     }
 
     // EPUB 3 collection metadata:
-    // <meta property="belongs-to-collection">Series Name</meta>
+    // <meta property="belongs-to-collection">Series Name</meta>  (character data)
+    // <meta property="belongs-to-collection" content="Series Name"/>  (attribute, some generators)
     // <meta property="group-position">1</meta>
     if (metaProperty) {
       if (strcmp(metaProperty, "belongs-to-collection") == 0 && self->series.empty()) {
-        self->series.clear();
-        self->state = IN_BOOK_SERIES;
-        return;
+        if (metaContent) {
+          self->series = std::string(metaContent).substr(0, MAX_DESCRIPTION_LENGTH);
+        } else {
+          self->state = IN_BOOK_SERIES;
+          return;
+        }
       }
       if (strcmp(metaProperty, "group-position") == 0 && self->seriesIndex.empty()) {
-        self->seriesIndex.clear();
-        self->state = IN_BOOK_SERIES_INDEX;
-        return;
+        if (metaContent) {
+          self->seriesIndex = std::string(metaContent).substr(0, MAX_DESCRIPTION_LENGTH);
+        } else {
+          self->state = IN_BOOK_SERIES_INDEX;
+          return;
+        }
       }
     }
 
