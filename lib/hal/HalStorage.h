@@ -47,6 +47,7 @@ class HalStorage {
 
   uint64_t sdTotalBytes() const;
   uint64_t sdUsedBytes() const;
+  uint64_t sdFreeBytes() const;
 
   static HalStorage& getInstance() { return instance; }
 

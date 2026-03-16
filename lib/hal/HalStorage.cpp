@@ -81,6 +81,8 @@ uint64_t HalStorage::sdUsedBytes() const {
   return (clusterCount - cappedFreeClusters) * bytesPerCluster;
 }
 
+uint64_t HalStorage::sdFreeBytes() const { return sdTotalBytes() - sdUsedBytes(); }
+
 class HalFile::Impl {
  public:
   Impl(FsFile&& fsFile) : file(std::move(fsFile)) {}
