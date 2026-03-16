@@ -695,18 +695,21 @@ def _print_language_table(
     inherited_sets: List[Set[str]],
     string_keys: List[str],
     unused_keys: Set[str],
+    data_sizes: List[int],
 ) -> None:
     """Print a per-language summary table."""
     total = len(string_keys)
-    headers = ("Language", "Code", "Own", "Fallback", "Unused")
+    headers = ("Language", "Code", "Own", "Fallback", "Unused", "Data (B)")
 
     rows = []
-    for code, name, inherited in zip(language_codes, language_names, inherited_sets):
+    for code, name, inherited, size in zip(
+        language_codes, language_names, inherited_sets, data_sizes
+    ):
         own = total - len(inherited)
         fallback = len(inherited)
         # strings this language translated but the code never calls
         unused = len(unused_keys - inherited)
-        rows.append((name, code, str(own), str(fallback), str(unused)))
+        rows.append((name, code, str(own), str(fallback), str(unused), str(size)))
 
     # EN first, then alphabetically by ISO code
     rows.sort(key=lambda r: (0 if r[1] == "EN" else 1, r[1]))
@@ -731,8 +734,14 @@ def _print_language_table(
     for row in rows:
         _safe_print(fmt.format(*row))
     used = total - len(unused_keys)
+    total_size = sum(data_sizes)
+    offset_table_size = len(rows) * len(string_keys) * 2
     print(
         f"\n  Total: {total}  |  Used in code: {used}  |  Never used: {len(unused_keys)}"
+    )
+    print(
+        f"  Flash: {total_size:,} B string data  +  {offset_table_size:,} B offset tables"
+        f"  =  {total_size + offset_table_size:,} B total"
     )
 
 
@@ -825,8 +834,20 @@ def main(
             used_keys = set(string_keys)
             unused_set = set()
 
+        # Compute per-language data blob sizes:
+        # sum of UTF-8 byte length + 1 (null terminator) per string
+        data_sizes = [
+            sum(len(translations[k][i].encode("utf-8")) + 1 for k in string_keys)
+            for i in range(len(languages))
+        ]
+
         _print_language_table(
-            languages, language_names, inherited_sets, string_keys, unused_set
+            languages,
+            language_names,
+            inherited_sets,
+            string_keys,
+            unused_set,
+            data_sizes,
         )
         print()
 
