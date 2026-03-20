@@ -317,17 +317,34 @@ void CrossPointWebServer::handleNotFound() const {
 }
 
 void CrossPointWebServer::handleStatus() const {
-  const auto status = SystemStatus::collect();
+  const bool fastOnly = server->hasArg("phase") && server->arg("phase") == "fast";
+
+  SystemStatus status = SystemStatus::collectFast();
+  if (!fastOnly) {
+    SystemStatus::fillSdStatus(status);
+  }
 
   JsonDocument doc;
   doc["version"] = status.version;
+  doc["chipVersion"] = status.chipVersion;
+  doc["cpuMHz"] = status.cpuFreqMHz;
   doc["ip"] = status.ip;
   doc["mode"] = status.wifiMode;
   doc["rssi"] = status.rssi;
+  doc["macAddress"] = status.macAddress;
   doc["freeHeap"] = status.freeHeapBytes;
+  doc["minFreeHeap"] = status.minFreeHeapBytes;
+  doc["maxAllocHeap"] = status.maxAllocHeapBytes;
+  doc["flashTotal"] = status.flashBytes;
+  doc["flashAppUsed"] = status.flashAppUsedBytes;
+  doc["flashAppFree"] = status.flashAppFreeBytes;
+  doc["batteryPercent"] = status.batteryPercent;
+  doc["charging"] = status.charging;
   doc["uptime"] = status.uptimeSeconds;
+  doc["sdReady"] = !fastOnly;
   doc["sdTotal"] = status.sdTotalBytes;
   doc["sdUsed"] = status.sdUsedBytes;
+  doc["sdFree"] = status.sdFreeBytes;
 
   String json;
   serializeJson(doc, json);

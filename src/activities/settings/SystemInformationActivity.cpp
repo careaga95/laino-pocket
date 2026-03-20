@@ -25,6 +25,7 @@ static std::string formatBytes(uint64_t bytes) {
 void SystemInformationActivity::onEnter() {
   Activity::onEnter();
   status_.reset();
+  sdStatusReady_ = false;
   requestUpdate();
 }
 
@@ -35,10 +36,17 @@ void SystemInformationActivity::loop() {
     finish();
     return;
   }
-  // Collect status (includes the potentially slow SD FAT walk) outside of render()
-  // so the screen is shown with a "Reading..." placeholder first.
+  // Collect fast fields first so this page appears immediately.
   if (!status_.has_value()) {
-    status_ = SystemStatus::collect();
+    status_ = SystemStatus::collectFast();
+    requestUpdate();
+    return;
+  }
+
+  // SD stats can be slower to compute on large cards.
+  if (!sdStatusReady_) {
+    SystemStatus::fillSdStatus(*status_);
+    sdStatusReady_ = true;
     requestUpdate();
   }
 }
@@ -46,7 +54,6 @@ void SystemInformationActivity::loop() {
 void SystemInformationActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto pageWidth = renderer.getScreenWidth();
-  const auto pageHeight = renderer.getScreenHeight();
 
   renderer.clearScreen();
 
@@ -67,40 +74,46 @@ void SystemInformationActivity::render(RenderLock&&) {
 
   if (!status_.has_value()) {
     // Stats not yet collected — show a placeholder so the screen updates immediately
-    drawRow(0, "Version", CROSSPOINT_VERSION);
-    drawRow(3, "SD card", "Reading...");
+    drawRow(0, tr(STR_FW_VERSION), CROSSPOINT_VERSION);
+    drawRow(2, "", tr(STR_GATHERING_DATA));
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     renderer.displayBuffer();
     return;
   }
 
   const auto& status = *status_;
 
-  // Device
-  drawRow(0, "Version", status.version);
-  drawRow(1, "Free heap", std::to_string(status.freeHeapBytes / 1024) + " KB");
+  drawRow(0, tr(STR_FW_VERSION), status.version);
+  drawRow(1, tr(STR_CHIP), status.chipVersion);
+  drawRow(2, tr(STR_CPU), std::to_string(status.cpuFreqMHz) + " " + tr(STR_MHZ));
+  drawRow(3, tr(STR_FREE_RAM), formatBytes(status.freeHeapBytes));
+  drawRow(4, tr(STR_MIN_FREE), formatBytes(status.minFreeHeapBytes));
+  drawRow(5, tr(STR_MAX_BLOCK), formatBytes(status.maxAllocHeapBytes));
+  drawRow(
+      6, tr(STR_FLASH_USED),
+      formatBytes(status.flashAppUsedBytes) + " / " + formatBytes(status.flashAppUsedBytes + status.flashAppFreeBytes));
+  std::string batteryLabel = std::to_string(status.batteryPercent) + "%";
+  if (status.charging) {
+    batteryLabel += " (";
+    batteryLabel += tr(STR_CHARGING);
+    batteryLabel += ")";
+  }
+  drawRow(7, tr(STR_BATTERY), batteryLabel);
 
   const uint32_t h = status.uptimeSeconds / 3600;
   const uint32_t m = (status.uptimeSeconds % 3600) / 60;
   const uint32_t s = status.uptimeSeconds % 60;
   char uptimeBuf[16];
   snprintf(uptimeBuf, sizeof(uptimeBuf), "%uh %02um %02us", h, m, s);
-  drawRow(2, "Uptime", uptimeBuf);
+  drawRow(8, tr(STR_UPTIME), uptimeBuf);
 
-  // SD card
-  const std::string sdUsed = formatBytes(status.sdUsedBytes) + " / " + formatBytes(status.sdTotalBytes);
-  drawRow(3, "SD card", status.sdTotalBytes > 0 ? sdUsed : "N/A");
-
-  // WiFi (shown as-is; "Off" when not connected)
-  std::string wifiLabel = status.wifiMode;
-  if (status.rssi != 0) {
-    wifiLabel += " (" + std::to_string(status.rssi) + " dBm)";
-  }
-  drawRow(4, "WiFi", wifiLabel);
-  if (status.wifiMode != "Off") {
-    drawRow(5, "IP address", status.ip);
-    drawRow(6, "MAC address", status.macAddress);
+  if (!sdStatusReady_) {
+    drawRow(9, tr(STR_SD_CARD), tr(STR_READING));
+  } else if (status.sdTotalBytes > 0) {
+    drawRow(9, tr(STR_SD_CARD), formatBytes(status.sdUsedBytes) + " / " + formatBytes(status.sdTotalBytes));
   } else {
-    drawRow(5, "MAC address", status.macAddress);
+    drawRow(9, tr(STR_SD_CARD), tr(STR_NOT_SET));
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");

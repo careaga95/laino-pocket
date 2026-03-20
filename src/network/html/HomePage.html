@@ -129,16 +129,48 @@
       <span class="value" id="version">Loading...</span>
     </div>
     <div class="info-row">
+      <span class="label">Chip</span>
+      <span class="value" id="chip-version">Loading...</span>
+    </div>
+    <div class="info-row">
+      <span class="label">CPU</span>
+      <span class="value" id="cpu-mhz">Loading...</span>
+    </div>
+    <div class="info-row">
       <span class="label">WiFi Status</span>
-      <span class="status">Connected</span>
+      <span class="status" id="wifi-status">Loading...</span>
     </div>
     <div class="info-row">
       <span class="label">IP Address</span>
       <span class="value" id="ip-address">Loading...</span>
     </div>
     <div class="info-row">
+      <span class="label">MAC Address</span>
+      <span class="value" id="mac-address">Loading...</span>
+    </div>
+    <div class="info-row">
       <span class="label">Free Memory</span>
       <span class="value" id="free-heap">Loading...</span>
+    </div>
+    <div class="info-row">
+      <span class="label">Min Free</span>
+      <span class="value" id="min-free-heap">Loading...</span>
+    </div>
+    <div class="info-row">
+      <span class="label">Max Block</span>
+      <span class="value" id="max-alloc-heap">Loading...</span>
+    </div>
+    <div class="info-row">
+      <span class="label">Flash Used</span>
+      <span class="value" id="flash-used">Loading...</span>
+    </div>
+    <div class="info-row">
+      <span class="label">Battery</span>
+      <span class="value" id="battery">Loading...</span>
+    </div>
+    <div class="info-row">
+      <span class="label">Uptime</span>
+      <span class="value" id="uptime">Loading...</span>
     </div>
     <div class="info-row">
       <span class="label">SD Card</span>
@@ -160,21 +192,64 @@
       return parseFloat(val.toFixed(2)).toLocaleString() + ' ' + units[i];
     }
 
-    async function fetchStatus() {
-      try {
-        const response = await fetch('/api/status');
-        if (!response.ok) {
-          throw new Error('Failed to fetch status: ' + response.status + ' ' + response.statusText);
-        }
-        const data = await response.json();
-        document.getElementById('version').textContent = data.version || 'N/A';
-        document.getElementById('ip-address').textContent = data.ip || 'N/A';
-        document.getElementById('free-heap').textContent = data.freeHeap
-          ? data.freeHeap.toLocaleString() + ' bytes'
-          : 'N/A';
+    function formatUptime(seconds) {
+      if (seconds == null) return 'N/A';
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = seconds % 60;
+      return h + 'h ' + String(m).padStart(2, '0') + 'm ' + String(s).padStart(2, '0') + 's';
+    }
+
+    function applyStatus(data, includeSd) {
+      document.getElementById('version').textContent = data.version || 'N/A';
+      document.getElementById('chip-version').textContent = data.chipVersion || 'N/A';
+      document.getElementById('cpu-mhz').textContent = data.cpuMHz
+        ? data.cpuMHz.toLocaleString() + ' MHz'
+        : 'N/A';
+      const wifiStatus = document.getElementById('wifi-status');
+      wifiStatus.textContent = data.mode || 'N/A';
+      document.getElementById('ip-address').textContent = data.ip || 'N/A';
+      document.getElementById('mac-address').textContent = data.macAddress || 'N/A';
+      document.getElementById('free-heap').textContent = data.freeHeap
+        ? formatBytes(data.freeHeap)
+        : 'N/A';
+      document.getElementById('min-free-heap').textContent = data.minFreeHeap
+        ? formatBytes(data.minFreeHeap)
+        : 'N/A';
+      document.getElementById('max-alloc-heap').textContent = data.maxAllocHeap
+        ? formatBytes(data.maxAllocHeap)
+        : 'N/A';
+      document.getElementById('flash-used').textContent = data.flashAppUsed
+        ? (formatBytes(data.flashAppUsed) + ' / ' + formatBytes((data.flashAppUsed || 0) + (data.flashAppFree || 0)))
+        : 'N/A';
+      document.getElementById('battery').textContent = (data.batteryPercent != null)
+        ? (data.batteryPercent + '%' + (data.charging ? ' (Charging)' : ''))
+        : 'N/A';
+      document.getElementById('uptime').textContent = formatUptime(data.uptime);
+
+      if (includeSd) {
         document.getElementById('sd-space').textContent = data.sdTotal
           ? formatBytes(data.sdUsed) + ' / ' + formatBytes(data.sdTotal)
           : 'N/A';
+      }
+    }
+
+    async function fetchStatus() {
+      try {
+        const fastResponse = await fetch('/api/status?phase=fast');
+        if (!fastResponse.ok) {
+          throw new Error('Failed to fetch fast status: ' + fastResponse.status + ' ' + fastResponse.statusText);
+        }
+        const fastData = await fastResponse.json();
+        applyStatus(fastData, false);
+        document.getElementById('sd-space').textContent = 'Reading...';
+
+        const response = await fetch('/api/status');
+        if (!response.ok) {
+          throw new Error('Failed to fetch full status: ' + response.status + ' ' + response.statusText);
+        }
+        const data = await response.json();
+        applyStatus(data, true);
       } catch (error) {
         console.error('Error fetching status:', error);
       }
