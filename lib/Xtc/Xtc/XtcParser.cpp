@@ -186,7 +186,7 @@ XtcError XtcParser::readPageTable() {
   }
 
   // Seek to page table
-  if (!m_file.seek(m_header.pageTableOffset)) {
+  if (!seekToOffset(m_file, m_header.pageTableOffset)) {
     LOG_DBG("XTC", "Failed to seek to page table at %llu", m_header.pageTableOffset);
     return XtcError::READ_ERROR;
   }
@@ -272,7 +272,7 @@ XtcError XtcParser::readChapters() {
     return XtcError::OK;
   }
 
-  if (!m_file.seek(chapterOffset)) {
+  if (!seekToOffset(m_file, chapterOffset)) {
     return XtcError::READ_ERROR;
   }
 
