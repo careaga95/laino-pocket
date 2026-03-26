@@ -199,6 +199,13 @@ class CrossPointSettings {
   uint8_t showHiddenFiles = 0;
   // Image rendering mode in EPUB reader
   uint8_t imageRendering = IMAGES_DISPLAY;
+  // Show clock in the reader status bar
+  uint8_t statusBarClock = 0;
+  // Clock format: 0 = 24h (14:00), 1 = 12h (2:00pm)
+  uint8_t clockFormat12h = 0;
+  // Keep the LP timer running during deep sleep (GPIO13 HIGH) so the clock
+  // can be accurately restored on wake.  Increases sleep current by ~3-4 mA.
+  uint8_t keepClockAlive = 0;
 
   ~CrossPointSettings() = default;
 
