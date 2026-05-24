@@ -58,7 +58,8 @@ class PageImage final : public PageElement {
   PageImage(std::shared_ptr<ImageBlock> block, const int16_t xPos, const int16_t yPos)
       : PageElement(xPos, yPos), imageBlock(std::move(block)) {}
   void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset) override;
-  void renderWithForceLoad(GfxRenderer& renderer, int xOffset, int yOffset, bool forceLoad);
+  void renderWithForceLoad(GfxRenderer& renderer, int xOffset, int yOffset, bool forceLoad,
+                           bool monochromeOutput = false);
   bool serialize(FsFile& file) override;
   PageElementTag getTag() const override { return TAG_PageImage; }
   static std::unique_ptr<PageImage> deserialize(FsFile& file);
@@ -129,8 +130,19 @@ class Page {
     footnotes.push_back(entry);
   }
 
-  void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, bool forceLoadLargeImages = true) const;
+  // skipDecodedImages=true: PageImages that would decode (not show as a placeholder)
+  // are skipped. Used by the BW pass when an AA grayscale-image pass will redraw
+  // them at full 4-level tonality. Placeholders still render in BW (they're just
+  // a box+text, not dithered pixels).
+  // monochromeImages=true: render images via the 1-bit Atkinson path. Used when
+  // no grayscale image pass will follow (AA off or low-mem) so the BW
+  // DirectPixelWriter `<3` rule yields clean black/white instead of muddy dark.
+  void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, bool forceLoadLargeImages = true,
+              bool skipDecodedImages = false, bool monochromeImages = false) const;
   void renderTextOnly(GfxRenderer& renderer, int fontId, int xOffset, int yOffset) const;
+  // Renders only PageImages that have actual decoded pixels (skips placeholders,
+  // which already rendered in the BW pass as a box+text).
+  void renderImagesOnly(GfxRenderer& renderer, int xOffset, int yOffset, bool forceLoadLargeImages) const;
   // Decode any missing .pxc pixel caches for images on this page. Called before the
   // BW render so the large (~60 KB contiguous) PNG decoder allocation runs while heap
   // contig is at its peak — before font prewarm and BW backup chunks fragment it.

@@ -25,13 +25,16 @@ bool ImageBlock::imageExists() const { return Storage.exists(imagePath.c_str());
 
 namespace {
 
-std::string getCachePath(const std::string& imagePath, ImageDitherMode ditherMode) {
+std::string getCachePath(const std::string& imagePath, ImageDitherMode ditherMode, bool monochromeOutput) {
+  // The monochrome (1-bit Atkinson) cache only stores values 0/3, so it can't be
+  // reused for the 4-level grayscale render path — keep it in a separate file.
+  const char* monoSuffix = monochromeOutput ? "_mono" : "";
   // Replace extension with .pxc (pixel cache)
   size_t dotPos = imagePath.rfind('.');
   if (dotPos != std::string::npos) {
-    return imagePath.substr(0, dotPos) + getImageDitherCacheSuffix(ditherMode) + ".pxc";
+    return imagePath.substr(0, dotPos) + getImageDitherCacheSuffix(ditherMode) + monoSuffix + ".pxc";
   }
-  return imagePath + getImageDitherCacheSuffix(ditherMode) + ".pxc";
+  return imagePath + getImageDitherCacheSuffix(ditherMode) + monoSuffix + ".pxc";
 }
 
 bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x, int y, int expectedWidth,
@@ -118,7 +121,7 @@ bool ImageBlock::isLargeImage() const {
 
 bool ImageBlock::hasPixelCache() const {
   const ImageDitherMode ditherMode = imageDitherModeFromSetting(SETTINGS.imageDithering);
-  return Storage.exists(getCachePath(imagePath, ditherMode).c_str());
+  return Storage.exists(getCachePath(imagePath, ditherMode, false).c_str());
 }
 
 bool ImageBlock::wouldShowPlaceholder(bool forceLoad) const {
@@ -126,12 +129,7 @@ bool ImageBlock::wouldShowPlaceholder(bool forceLoad) const {
   if (!isLargeImage()) return false;
   // If the pixel cache already exists the render is instant — no placeholder needed
   const ImageDitherMode ditherMode = imageDitherModeFromSetting(SETTINGS.imageDithering);
-  const std::string pxcPath = [&] {
-    size_t dot = imagePath.rfind('.');
-    return (dot != std::string::npos ? imagePath.substr(0, dot) : imagePath) + getImageDitherCacheSuffix(ditherMode) +
-           ".pxc";
-  }();
-  return !Storage.exists(pxcPath.c_str());
+  return !Storage.exists(getCachePath(imagePath, ditherMode, false).c_str());
 }
 
 void ImageBlock::renderPlaceholder(GfxRenderer& renderer, const int x, const int y) const {
@@ -156,7 +154,8 @@ void ImageBlock::renderPlaceholder(GfxRenderer& renderer, const int x, const int
   }
 }
 
-void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const bool forceLoad) {
+void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const bool forceLoad,
+                        const bool monochromeOutput) {
   LOG_DBG("IMG", "Rendering image at %d,%d: %s (%dx%d)", x, y, imagePath.c_str(), width, height);
 
   const int screenWidth = renderer.getScreenWidth();
@@ -169,9 +168,11 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const b
     return;
   }
 
-  // Try to render from pixel cache first (always, regardless of forceLoad)
+  // Try to render from pixel cache first (always, regardless of forceLoad).
+  // Mono and 4-level caches are kept in separate files so each render path gets
+  // the dither output its DirectPixelWriter branch expects.
   const ImageDitherMode ditherMode = imageDitherModeFromSetting(SETTINGS.imageDithering);
-  std::string cachePath = getCachePath(imagePath, ditherMode);
+  std::string cachePath = getCachePath(imagePath, ditherMode, monochromeOutput);
   if (renderFromCache(renderer, cachePath, x, y, width, height)) {
     return;
   }
@@ -210,6 +211,7 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const b
   config.performanceMode = false;
   config.useExactDimensions = true;
   config.cachePath = cachePath;
+  config.monochromeOutput = monochromeOutput;
 
   ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(imagePath);
   if (!decoder) {

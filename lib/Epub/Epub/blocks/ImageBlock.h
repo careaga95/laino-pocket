@@ -38,7 +38,11 @@ class ImageBlock final : public Block {
   BlockType getType() override { return IMAGE_BLOCK; }
   bool isEmpty() override { return false; }
 
-  void render(GfxRenderer& renderer, int x, int y, bool forceLoad = true);
+  // monochromeOutput=true switches the decode pipeline to a 1-bit Atkinson dither
+  // that emits only levels 0 and 3, so the BW DirectPixelWriter `<3` rule yields
+  // clean black/white instead of collapsing mid-greys to black. Used by the BW
+  // pass when the AA grayscale image pass isn't available (AA off or low-mem).
+  void render(GfxRenderer& renderer, int x, int y, bool forceLoad = true, bool monochromeOutput = false);
   bool serialize(FsFile& file);
   static std::unique_ptr<ImageBlock> deserialize(FsFile& file);
 

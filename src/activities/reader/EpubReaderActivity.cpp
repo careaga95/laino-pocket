@@ -135,10 +135,12 @@ inline void logReaderMemSnapshot(const char*) {}
 //
 // The page is re-rendered ceil(panelHeight/stripRows) times per plane, but
 // renderCharImpl culls out-of-band glyphs before bitmap decode so the cost
-// stays close to one render. Only renderTextOnly() is called here, matching the
-// legacy AA pass — images and HRs do not participate in grayscale.
+// stays close to one render. Text always participates; images participate when
+// `includeImages` is set (caller decides — typically true when the page has any
+// decoded images, false otherwise to skip the per-strip image cost on text-only
+// pages).
 bool runTiledGrayscalePass(GfxRenderer& renderer, const Page& page, int fontId, int marginLeft, int contentTop,
-                           bool fastAA) {
+                           bool fastAA, bool includeImages, bool forceLoadLargeImages) {
   if (!renderer.supportsStripGrayscale()) return false;
 
   // Push the SETTINGS toggle into the SDK before the AA refresh. No-op on X4;
@@ -166,6 +168,11 @@ bool runTiledGrayscalePass(GfxRenderer& renderer, const Page& page, int fontId, 
       renderer.beginStripTarget(scratch, y, rows);
       renderer.clearScreen(0x00);
       page.renderTextOnly(renderer, fontId, marginLeft, contentTop);
+      if (includeImages) {
+        // DirectPixelWriter clips against the active strip via originY/clipRows,
+        // so off-band image pixels are dropped automatically.
+        page.renderImagesOnly(renderer, marginLeft, contentTop, forceLoadLargeImages);
+      }
       renderer.endStripTarget();
       renderer.writeGrayscalePlaneStrip(lsbPlane, scratch, y, rows);
     }
@@ -2207,7 +2214,14 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   lastRenderStats.forcedHalfRefresh = forceHalfRefreshThisPage;
 
   logReaderMemSnapshot("before_bw_render");
-  page->render(renderer, getEffectiveReaderFontId(), orientedMarginLeft, contentTop, effectiveForceLoad);
+  // When AA + grayscale image pass will run, skip decoded images in BW so they
+  // don't get squashed by DirectPixelWriter's `<3` rule (3/4 dither levels → black).
+  // When AA isn't available, render images via the 1-bit Atkinson dither so the
+  // BW pass produces clean monochrome instead of muddy dark grays.
+  const bool grayscaleImagePassWillRun = imagePageWithAA;
+  page->render(renderer, getEffectiveReaderFontId(), orientedMarginLeft, contentTop, effectiveForceLoad,
+               /*skipDecodedImages=*/grayscaleImagePassWillRun,
+               /*monochromeImages=*/!grayscaleImagePassWillRun);
   renderStatusBar();
   if (showTruncatedSectionHintThisRender) {
     const int hintX = orientedMarginLeft + 4;
@@ -2231,27 +2245,11 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   logReaderMemSnapshot("after_bw_render");
 
   if (imagePageWithAA) {
-    // Double FAST_REFRESH with selective image blanking (pablohc's technique):
-    // HALF_REFRESH sets particles too firmly for the grayscale LUT to adjust.
-    // Instead, blank only the image area and do two fast refreshes.
-    // Step 1: Display page with image area blanked (text appears, image area white)
-    // Step 2: Re-render with images and display again (images appear clean)
-    int16_t imgX, imgY, imgW, imgH;
-    if (page->getImageBoundingBox(imgX, imgY, imgW, imgH)) {
-      renderer.fillRect(imgX + orientedMarginLeft, imgY + contentTop, imgW, imgH, false);
-      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
-
-      // Re-render page content to restore images into the blanked area
-      // Status bar is not re-rendered here to avoid reading stale dynamic values (e.g. battery %)
-      page->render(renderer, getEffectiveReaderFontId(), orientedMarginLeft, contentTop, effectiveForceLoad);
-      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
-    } else {
-      renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-    }
-    // Double FAST_REFRESH handles ghosting for image pages; don't count toward full refresh cadence
-    if (forceHalfRefreshThisPage) {
-      pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
-    }
+    // The BW pass skipped decoded images, so the image area is currently blank
+    // in the framebuffer — no need for the legacy double-FAST_REFRESH blanking
+    // dance (pablohc's technique). The image will be painted by the subsequent
+    // grayscale image pass, which produces the cleaner 4-level result anyway.
+    ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
   } else if (forceHalfRefreshThisPage) {
     renderer.displayBuffer(HalDisplay::HALF_REFRESH);
     pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
@@ -2278,7 +2276,8 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     logReaderMemSnapshot("tiled_gray_begin");
     const auto tTiledBegin = millis();
     grayscaleDone = runTiledGrayscalePass(renderer, *page, getEffectiveReaderFontId(), orientedMarginLeft, contentTop,
-                                          SETTINGS.fastAntiAliasing);
+                                          SETTINGS.fastAntiAliasing,
+                                          /*includeImages=*/imagePageWithAA, effectiveForceLoad);
     if (grayscaleDone) {
       tiledGrayMs = millis() - tTiledBegin;
       fcm->logStats("tiled_gray");
@@ -2342,6 +2341,9 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       renderer.clearScreen(0x00);
       renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
       page->renderTextOnly(renderer, getEffectiveReaderFontId(), orientedMarginLeft, contentTop);
+      if (imagePageWithAA) {
+        page->renderImagesOnly(renderer, orientedMarginLeft, contentTop, effectiveForceLoad);
+      }
       renderer.copyGrayscaleLsbBuffers();
       const auto tGrayLsb = millis();
       logReaderMemSnapshot("gray_lsb_end");
@@ -2351,6 +2353,9 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       renderer.clearScreen(0x00);
       renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
       page->renderTextOnly(renderer, getEffectiveReaderFontId(), orientedMarginLeft, contentTop);
+      if (imagePageWithAA) {
+        page->renderImagesOnly(renderer, orientedMarginLeft, contentTop, effectiveForceLoad);
+      }
       renderer.copyGrayscaleMsbBuffers();
       const auto tGrayMsb = millis();
       logReaderMemSnapshot("gray_msb_end");
@@ -2388,6 +2393,16 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
         const auto tBwRestore = millis();
         logReaderMemSnapshot("bw_restore_end");
         bwRestoreMs = tBwRestore - tBwStore;
+      }
+
+      // Recovery: the BW pass deliberately skipped decoded images expecting the
+      // grayscale image pass to paint them, but no grayscale pass ran. Re-render
+      // the images in BW using the 1-bit Atkinson dither (monochromeImages=true)
+      // so the cover at least shows up as clean black/white instead of nothing.
+      if (imagePageWithAA) {
+        page->render(renderer, getEffectiveReaderFontId(), orientedMarginLeft, contentTop, effectiveForceLoad,
+                     /*skipDecodedImages=*/false, /*monochromeImages=*/true);
+        renderer.displayBuffer(HalDisplay::FAST_REFRESH);
       }
 
       const auto tEnd = millis();
@@ -2459,8 +2474,9 @@ void EpubReaderActivity::displayPreRenderedPage(const Page& page, const int orie
   // support strip grayscale or when the strip scratch can't be allocated.
   const bool aaConfigured = getEffectiveTextAntiAliasing() && !antiAliasingSuspendedLowMemory;
   if (aaConfigured) {
+    // Pre-rendered pages are text-only — no image pass needed.
     if (runTiledGrayscalePass(renderer, page, getEffectiveReaderFontId(), orientedMarginLeft, contentTop,
-                              SETTINGS.fastAntiAliasing)) {
+                              SETTINGS.fastAntiAliasing, /*includeImages=*/false, /*forceLoadLargeImages=*/false)) {
       return;
     }
 

@@ -30,8 +30,9 @@ void PageImage::render(GfxRenderer& renderer, const int fontId, const int xOffse
   imageBlock->render(renderer, xPos + xOffset, yPos + yOffset);
 }
 
-void PageImage::renderWithForceLoad(GfxRenderer& renderer, const int xOffset, const int yOffset, const bool forceLoad) {
-  imageBlock->render(renderer, xPos + xOffset, yPos + yOffset, forceLoad);
+void PageImage::renderWithForceLoad(GfxRenderer& renderer, const int xOffset, const int yOffset, const bool forceLoad,
+                                    const bool monochromeOutput) {
+  imageBlock->render(renderer, xPos + xOffset, yPos + yOffset, forceLoad, monochromeOutput);
 }
 
 bool PageImage::serialize(FsFile& file) {
@@ -205,10 +206,12 @@ std::unique_ptr<PageTableFragment> PageTableFragment::deserialize(FsFile& file) 
 }
 
 void Page::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset,
-                  const bool forceLoadLargeImages) const {
+                  const bool forceLoadLargeImages, const bool skipDecodedImages, const bool monochromeImages) const {
   for (auto& element : elements) {
     if (element->getTag() == TAG_PageImage) {
-      static_cast<PageImage&>(*element).renderWithForceLoad(renderer, xOffset, yOffset, forceLoadLargeImages);
+      auto& pi = static_cast<PageImage&>(*element);
+      if (skipDecodedImages && !pi.getImageBlock().wouldShowPlaceholder(forceLoadLargeImages)) continue;
+      pi.renderWithForceLoad(renderer, xOffset, yOffset, forceLoadLargeImages, monochromeImages);
     } else {
       element->render(renderer, fontId, xOffset, yOffset);
     }
@@ -258,6 +261,19 @@ void Page::renderTextOnly(GfxRenderer& renderer, const int fontId, const int xOf
   for (auto& element : elements) {
     if (element->getTag() == TAG_PageLine) {
       element->render(renderer, fontId, xOffset, yOffset);
+    }
+  }
+}
+
+void Page::renderImagesOnly(GfxRenderer& renderer, const int xOffset, const int yOffset,
+                            const bool forceLoadLargeImages) const {
+  for (auto& element : elements) {
+    if (element->getTag() == TAG_PageImage) {
+      auto& pi = static_cast<PageImage&>(*element);
+      // Placeholders already drew in the BW pass; the grayscale path is only
+      // for images with actual decoded pixel data.
+      if (pi.getImageBlock().wouldShowPlaceholder(forceLoadLargeImages)) continue;
+      pi.renderWithForceLoad(renderer, xOffset, yOffset, forceLoadLargeImages, false);
     }
   }
 }
