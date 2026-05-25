@@ -167,3 +167,27 @@ so future work has a clear target list. Particularly interested in:
 If you can read or use the device in one of these languages, your feedback (even without code) is genuinely useful.
 Open a Discussion with concrete examples (screenshots, sample EPUBs, expected vs actual behavior) and we will
 prioritize from there.
+
+## 7. Funding and Contributor Sustainability
+
+CrossPoint uses [Royalty.dev](https://royalty.dev) (yes, a product built by [@itsthisjustin](https://github.com/itsthisjustin))
+to fund contributors. There has been some tension in the community around this, so the intent is being clarified
+here directly.
+
+**Why we do this:**
+
+* To maintain long-term interest from contributors and maintainers, in direct response to substantial community
+  requests for a way to give back.
+* To motivate contributors to invest in the *core* project rather than spinning up competing forks.
+* To help pay for new ESP32 devices so we can port CrossPoint to additional hardware.
+* To give the project a credible long-term path to sustainability.
+
+**How it works:**
+
+* Funds are distributed automatically to contributors based on impact to the codebase and tenure on the project.
+* Over **$600** was raised in the first few days after opening up funding, which is a signal the demand is real.
+* The exact scoring methodology is published at <https://app.royalty.dev/transparency>.
+
+**This is not fixed in stone.** The weighting, eligibility, and distribution rules can be tweaked as we learn what
+works for this project. If you have concerns or suggestions about how funds are allocated, open a Discussion. The
+goal is a system that fairly recognizes the people doing the work, not a perfect one on day one.
