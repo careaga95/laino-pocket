@@ -143,10 +143,14 @@ bool BaseTheme::showButtonHints() { return CROSSPOINT_SHOW_BUTTON_HINTS; }
 // *Impl, which only ever runs when hints are enabled.
 void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                                 const char* btn4) const {
+  // showButtonHints() is a build-time switch (CROSSPOINT_SHOW_BUTTON_HINTS); the
+  // constant condition is intentional.
+  // cppcheck-suppress knownConditionTrueFalse
   if (!showButtonHints()) return;
   drawButtonHintsImpl(renderer, btn1, btn2, btn3, btn4);
 }
 void BaseTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const {
+  // cppcheck-suppress knownConditionTrueFalse
   if (!showButtonHints()) return;
   drawSideButtonHintsImpl(renderer, topBtn, bottomBtn);
 }
