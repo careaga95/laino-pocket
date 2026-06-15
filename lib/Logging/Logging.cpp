@@ -1,5 +1,7 @@
 #include "Logging.h"
 
+#include <esp_rom_sys.h>
+
 #include <string>
 
 #define MAX_ENTRY_LEN 256
@@ -59,9 +61,18 @@ void logPrintf(const char* level, const char* origin, const char* format, ...) {
     }
   }
   va_end(args);
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+  // ESP32-S3 over USB-Serial-JTAG (HWCDC): Serial's `operator bool` reads false under a
+  // host monitor (and HWCDC.write itself drops when it thinks it's disconnected), so the
+  // `if (logSerial)` path below silently swallows every line. esp_rom_printf writes to the
+  // always-on ROM/IDF console — the same channel that carries the boot banner and ARDUHAL
+  // logs — so output is actually visible. `buf` is already fully formatted; pass via %s.
+  esp_rom_printf("%s", buf);
+#else
   if (logSerial) {
     logSerial.print(buf);
   }
+#endif
   addToLogRingBuffer(buf);
 }
 

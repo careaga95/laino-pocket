@@ -10,14 +10,27 @@
 
 HalPowerManager powerManager;  // Singleton instance
 
+namespace {
+// The fuel gauge's I2C controller (Wire or Wire1) per the active board profile.
+// On single-bus SoCs (ESP32-C3, SOC_I2C_NUM == 1) Wire1 doesn't exist, so always
+// use Wire. On Sticky the gauge is on Wire1 so it doesn't fight the GT911 touch,
+// which owns Wire.
+TwoWire& gaugeWire() {
+#if SOC_I2C_NUM > 1
+  if (BoardConfig::ACTIVE.batteryGauge.i2cBus == 1) return Wire1;
+#endif
+  return Wire;
+}
+}  // namespace
+
 void HalPowerManager::begin() {
   const auto& gauge = BoardConfig::ACTIVE.batteryGauge;
   if (gauge.gaugeAddr != 0) {
     // Board has an I2C fuel gauge (X3, LilyGo, Sticky, ...). Pins/freq come from
     // the active board profile, not hardcoded X3 values. I2C init must come AFTER
     // gpio.begin() so early hardware detection/probes are finished.
-    Wire.begin(gauge.i2cSda, gauge.i2cScl, gauge.i2cHz);
-    Wire.setTimeOut(4);
+    gaugeWire().begin(gauge.i2cSda, gauge.i2cScl, gauge.i2cHz);
+    gaugeWire().setTimeOut(4);
     _batteryUseI2C = true;
   } else if (BoardConfig::ACTIVE.batteryAdc >= 0) {
     // ADC-sensed board (X4: GPIO0, M5Paper: GPIO35). Skip when the profile leaves
@@ -116,19 +129,20 @@ uint16_t HalPowerManager::getBatteryPercentage() const {
     // BQ27220-class, SOC at 0x2C). On I2C error, keep last known value to avoid
     // UI jitter/slowdowns.
     const uint8_t gaugeAddr = BoardConfig::ACTIVE.batteryGauge.gaugeAddr;
-    Wire.beginTransmission(gaugeAddr);
-    Wire.write(BQ27220_SOC_REG);
-    if (Wire.endTransmission(false) != 0) {
+    TwoWire& w = gaugeWire();
+    w.beginTransmission(gaugeAddr);
+    w.write(BQ27220_SOC_REG);
+    if (w.endTransmission(false) != 0) {
       _batteryLastPollMs = now;
       return _batteryCachedPercent;
     }
-    Wire.requestFrom(gaugeAddr, (uint8_t)2);
-    if (Wire.available() < 2) {
+    w.requestFrom(gaugeAddr, (uint8_t)2);
+    if (w.available() < 2) {
       _batteryLastPollMs = now;
       return _batteryCachedPercent;
     }
-    const uint8_t lo = Wire.read();
-    const uint8_t hi = Wire.read();
+    const uint8_t lo = w.read();
+    const uint8_t hi = w.read();
     const uint16_t soc = (hi << 8) | lo;
     _batteryCachedPercent = soc > 100 ? 100 : soc;
     _batteryLastPollMs = now;
