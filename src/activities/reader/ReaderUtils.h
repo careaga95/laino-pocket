@@ -14,6 +14,9 @@ constexpr unsigned long GO_HOME_MS = 1000;
 constexpr unsigned long SKIP_HOLD_MS = 700;
 constexpr unsigned long BOOKMARK_HOLD_MS = 400;
 constexpr unsigned long BOOKMARK_MESSAGE_DURATION_MS = 2500;
+// Press-and-hold in the center touch zone (see detectTouchPageTurn) opens the
+// reader menu, the touch analogue of releasing the Confirm button.
+constexpr unsigned long TOUCH_MENU_HOLD_MS = 400;
 
 inline void applyOrientation(GfxRenderer& renderer, const uint8_t orientation) {
   switch (orientation) {
@@ -64,19 +67,21 @@ inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
 
 // Touch reader controls: a tap on the left third of the (oriented) screen turns
 // back a page, the right third turns forward, mirroring the side page buttons.
-// heldMs carries the contact duration so callers can apply the same long-press
-// behavior (chapter skip / orientation change) as the buttons. The center column
-// is left for the menu/Back gesture handled by each reader. Gated off the Xteink
-// devices (no touch) and behind the touchReaderControls setting; returns all-false
-// otherwise, so non-touch readers pay a single branch.
+// The center third opens the reader menu on press-and-hold (see center/heldMs;
+// the menu/Back gesture is handled by each reader). heldMs carries the contact
+// duration so callers can apply the same long-press behavior (chapter skip /
+// orientation change) as the buttons. Gated off the Xteink devices (no touch)
+// and behind the touchReaderControls setting; returns all-false otherwise, so
+// non-touch readers pay a single branch.
 struct TouchPageTurn {
   bool prev;
   bool next;
+  bool center;
   unsigned long heldMs;
 };
 
 inline TouchPageTurn detectTouchPageTurn(GfxRenderer& renderer) {
-  TouchPageTurn result{false, false, 0};
+  TouchPageTurn result{false, false, false, 0};
   if (gpio.isXteinkDevice() || !SETTINGS.touchReaderControls) {
     return result;
   }
@@ -91,9 +96,17 @@ inline TouchPageTurn detectTouchPageTurn(GfxRenderer& renderer) {
     result.prev = true;
   } else if (lx >= 2 * third) {
     result.next = true;
+  } else {
+    result.center = true;
   }
   result.heldMs = gpio.lastTouchHeldMs();
   return result;
+}
+
+// True when the center zone was pressed and held long enough to open the reader
+// menu (touch analogue of a Confirm release).
+inline bool isTouchMenuGesture(const TouchPageTurn& touch) {
+  return touch.center && touch.heldMs >= TOUCH_MENU_HOLD_MS;
 }
 
 inline void displayWithRefreshCycle(const GfxRenderer& renderer, int& pagesUntilFullRefresh) {

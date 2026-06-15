@@ -53,8 +53,14 @@ void XtcReaderActivity::onExit() {
 }
 
 void XtcReaderActivity::loop() {
-  // Enter chapter selection activity
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  // Touch reader controls mirror the side page buttons (left third = back, right
+  // third = forward, press-and-hold = chapter skip) and the Confirm button
+  // (center press-and-hold = chapter selection). No-op on Xteink / when the
+  // setting is off.
+  const auto touch = ReaderUtils::detectTouchPageTurn(renderer);
+
+  // Enter chapter selection activity (Confirm release, or a center touch-and-hold).
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || ReaderUtils::isTouchMenuGesture(touch)) {
     if (xtc && xtc->hasChapters() && !xtc->getChapters().empty()) {
       startActivityForResult(
           std::make_unique<XtcReaderChapterSelectionActivity>(renderer, mappedInput, xtc, currentPage),
@@ -78,11 +84,6 @@ void XtcReaderActivity::loop() {
     onGoHome();
     return;
   }
-
-  // Touch reader controls mirror the side page buttons (left third = back,
-  // right third = forward, press-and-hold = chapter skip). No-op on Xteink /
-  // when the setting is off.
-  const auto touch = ReaderUtils::detectTouchPageTurn(renderer);
 
   auto [prevTriggered, nextTriggered, fromTilt] = ReaderUtils::detectPageTurn(mappedInput);
   prevTriggered = prevTriggered || touch.prev;
