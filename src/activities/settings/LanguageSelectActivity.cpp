@@ -32,6 +32,13 @@ void LanguageSelectActivity::loop() {
     return;
   }
 
+  const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
+  // Vertical swipe page-scrolls the list (touch nav without the side buttons).
+  if (mappedInput.wasListScroll(selectedIndex, totalItems, pageItems)) {
+    requestUpdate();
+    return;
+  }
+
   int downId = -1;
   if (mappedInput.wasItemTouchedDown(downId) && downId >= 0) {
     selectedIndex = downId;
@@ -49,8 +56,6 @@ void LanguageSelectActivity::loop() {
     handleSelection();
     return;
   }
-
-  const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
 
   // Handle navigation
   buttonNavigator.onNextRelease([this] {

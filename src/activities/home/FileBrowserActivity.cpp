@@ -206,6 +206,14 @@ void FileBrowserActivity::loop() {
   const int pathReserved = renderer.getLineHeight(SMALL_FONT_ID) + UITheme::getInstance().getMetrics().verticalSpacing;
   const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false, pathReserved);
 
+  // Vertical swipe page-scrolls the list (touch nav without the side buttons).
+  int scrollIdx = static_cast<int>(selectorIndex);
+  if (mappedInput.wasListScroll(scrollIdx, static_cast<int>(files.size()), pageItems)) {
+    selectorIndex = scrollIdx;
+    requestUpdate();
+    return;
+  }
+
   // Touch-down moves the selector to the pressed entry (shows selected state); release
   // opens it below.
   int downId = -1;

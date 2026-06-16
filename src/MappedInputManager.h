@@ -41,6 +41,11 @@ class MappedInputManager {
   // Swipe direction in the current logical (oriented) frame, or None. A swipe also
   // raises the tap helpers above, so check this first and consume it.
   SwipeDir wasSwipe() const;
+  // Page-scroll a list selection by a vertical swipe (touch nav without buttons):
+  // swipe up advances down the list, swipe down moves up, by pageItems, clamped to
+  // [0, count-1]. Updates index and returns true when a vertical swipe occurred, so
+  // callers can requestUpdate() and return before the tap handlers run.
+  bool wasListScroll(int& index, int count, int pageItems) const;
   bool wasAnyPressed() const;
   bool wasAnyReleased() const;
   unsigned long getHeldTime() const;

@@ -300,8 +300,10 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(SMALL_FONT_ID, smallFontFamily);
 
   // UI chrome font scaling on high-density / touch boards: Ubuntu UI is only built
-  // at 10/12pt, so remap the small UI fonts up the Noto Sans ladder to grow chrome
-  // text with uiScale. Reader body fonts aren't remapped, so book text is unchanged.
+  // at 10/12pt, so remap the UI fonts up the Noto Sans ladder to grow chrome text
+  // with uiScale. SMALL is deliberately NOT remapped — it's secondary/compact text
+  // (reader status bar, subtitles, battery %) that should stay small so reader
+  // chrome doesn't balloon. Reader body fonts aren't remapped either.
   if (const float s = UITheme::uiScale(); s > 1.05f) {
     auto nearestNotoSans = [](float pt) -> int {
       const struct {
@@ -322,9 +324,9 @@ void setupDisplayAndFonts(bool seamless = false) {
       }
       return best;
     };
-    const int from[3] = {SMALL_FONT_ID, UI_10_FONT_ID, UI_12_FONT_ID};
-    const int to[3] = {nearestNotoSans(8 * s), nearestNotoSans(10 * s), nearestNotoSans(12 * s)};
-    renderer.setUiFontRemap(from, to, 3);
+    const int from[2] = {UI_10_FONT_ID, UI_12_FONT_ID};
+    const int to[2] = {nearestNotoSans(10 * s), nearestNotoSans(12 * s)};
+    renderer.setUiFontRemap(from, to, 2);
   }
 
   // Discover and load SD card fonts

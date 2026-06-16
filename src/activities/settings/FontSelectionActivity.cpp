@@ -54,6 +54,14 @@ void FontSelectionActivity::loop() {
     return;
   }
 
+  const int listSize = static_cast<int>(fonts_.size());
+  const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
+  // Vertical swipe page-scrolls the list (touch nav without the side buttons).
+  if (mappedInput.wasListScroll(selectedIndex_, listSize, pageItems)) {
+    requestUpdate();
+    return;
+  }
+
   int downId = -1;
   if (mappedInput.wasItemTouchedDown(downId) && downId >= 0) {
     selectedIndex_ = downId;
@@ -71,9 +79,6 @@ void FontSelectionActivity::loop() {
     handleSelection();
     return;
   }
-
-  const int listSize = static_cast<int>(fonts_.size());
-  const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
 
   buttonNavigator_.onNextRelease([this, listSize] {
     selectedIndex_ = ButtonNavigator::nextIndex(selectedIndex_, listSize);

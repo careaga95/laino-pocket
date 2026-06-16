@@ -14,21 +14,8 @@
 #include "RecentBooksStore.h"
 #include "components/TouchRegistry.h"
 #include "components/UITheme.h"
-#include "components/icons/book.h"
-#include "components/icons/book24.h"
-#include "components/icons/bookmark.h"
 #include "components/icons/cover.h"
-#include "components/icons/file24.h"
-#include "components/icons/folder.h"
-#include "components/icons/folder24.h"
-#include "components/icons/hotspot.h"
-#include "components/icons/image24.h"
-#include "components/icons/library.h"
-#include "components/icons/recent.h"
-#include "components/icons/settings2.h"
-#include "components/icons/text24.h"
-#include "components/icons/transfer.h"
-#include "components/icons/wifi.h"
+#include "components/icons/generated_icons.h"  // Lucide icons (freeink::Icon) generated via the SDK Icons lib
 #include "fontIds.h"
 
 // Internal constants
@@ -47,55 +34,60 @@ constexpr int listIconSize = 24;
 constexpr int mainMenuColumns = 2;
 int coverWidth = 0;
 
-const uint8_t* iconForName(UIIcon icon, int size) {
-  if (size == 24) {
-    switch (icon) {
-      case UIIcon::Folder:
-        return Folder24Icon;
-      case UIIcon::Text:
-        return Text24Icon;
-      case UIIcon::Image:
-        return Image24Icon;
-      case UIIcon::Book:
-        return Book24Icon;
-      case UIIcon::File:
-        return File24Icon;
-      default:
-        return nullptr;
-    }
-  } else if (size == 32) {
-    switch (icon) {
-      case UIIcon::Folder:
-        return FolderIcon;
-      case UIIcon::Book:
-        return BookIcon;
-      case UIIcon::Recent:
-        return RecentIcon;
-      case UIIcon::Settings:
-        return Settings2Icon;
-      case UIIcon::Transfer:
-        return TransferIcon;
-      case UIIcon::Library:
-        return LibraryIcon;
-      case UIIcon::Wifi:
-        return WifiIcon;
-      case UIIcon::Hotspot:
-        return HotspotIcon;
-      case UIIcon::Bookmark:
-        return BookmarkIcon;
-      default:
-        return nullptr;
+// Pick the generated Lucide icon variant nearest to targetPx for a UIIcon. The
+// generator emits 24/32/40/48px with each icon's optical center baked in, so a
+// scaled UI gets a crisp larger asset (not an upscaled one) and exact alignment.
+const freeink::Icon* pickIcon(UIIcon icon, int targetPx) {
+  const freeink::Icon* const* v = nullptr;
+#define VARIANTS(n)                                                                      \
+  {                                                                                      \
+    static const freeink::Icon* a[] = {&icon_##n##_24, &icon_##n##_32, &icon_##n##_40,   \
+                                       &icon_##n##_48};                                  \
+    v = a;                                                                               \
+  }
+  switch (icon) {
+    case UIIcon::Folder: VARIANTS(folder) break;
+    case UIIcon::Text: VARIANTS(text) break;
+    case UIIcon::Image: VARIANTS(image) break;
+    case UIIcon::Book: VARIANTS(book) break;
+    case UIIcon::File: VARIANTS(file) break;
+    case UIIcon::Recent: VARIANTS(recent) break;
+    case UIIcon::Settings: VARIANTS(settings) break;
+    case UIIcon::Transfer: VARIANTS(transfer) break;
+    case UIIcon::Library: VARIANTS(library) break;
+    case UIIcon::Wifi: VARIANTS(wifi) break;
+    case UIIcon::Hotspot: VARIANTS(hotspot) break;
+    case UIIcon::Bookmark: VARIANTS(bookmark) break;
+    default: return nullptr;
+  }
+#undef VARIANTS
+  static constexpr int kSizes[] = {24, 32, 40, 48};
+  int best = 0, bestDist = 1 << 30;
+  for (int i = 0; i < 4; ++i) {
+    const int d = kSizes[i] > targetPx ? kSizes[i] - targetPx : targetPx - kSizes[i];
+    if (d < bestDist) {
+      bestDist = d;
+      best = i;
     }
   }
-  return nullptr;
+  return v[best];
 }
 
-// Top-left Y to box-center an icon on a line of text whose top is at textTop. The
-// UI icons are already centered in their boxes, so this just box-centers the icon
-// on the text's optical middle, which the renderer derives from the real font
-// metrics (x-height) — no per-size fraction to tweak.
-int iconYForText(const GfxRenderer& renderer, int fontId, int textTop, int boxSize) {
-  return textTop + renderer.getTextVisualCenterOffset(fontId) - boxSize / 2;
+// Scale a base icon size by the board uiScale.
+int scaledIcon(int base) { return static_cast<int>(base * UITheme::uiScale() + 0.5f); }
+
+// Nearest generated icon size (24/32/40/48) to targetPx.
+int nearestIconSize(int targetPx) {
+  static constexpr int kSizes[] = {24, 32, 40, 48};
+  int best = kSizes[0], bestDist = 1 << 30;
+  for (int s : kSizes) {
+    const int d = s > targetPx ? s - targetPx : targetPx - s;
+    if (d < bestDist) {
+      bestDist = d;
+      best = s;
+    }
+  }
+  return best;
 }
 }  // namespace
 
@@ -281,11 +273,12 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
 
   int textX = rect.x + M().contentSidePadding + hPaddingInSelection;
   int textWidth = contentWidth - M().contentSidePadding * 2 - hPaddingInSelection * 2;
-  int iconSize = 0;
+  int drawnIconPx = 0;  // chosen generated icon size (scaled by uiScale)
   if (rowIcon != nullptr) {
-    iconSize = (rowSubtitle != nullptr) ? mainMenuIconSize : listIconSize;
-    textX += iconSize + hPaddingInSelection;
-    textWidth -= iconSize + hPaddingInSelection;
+    const int base = (rowSubtitle != nullptr) ? mainMenuIconSize : listIconSize;
+    drawnIconPx = nearestIconSize(scaledIcon(base));
+    textX += drawnIconPx + hPaddingInSelection;
+    textWidth -= drawnIconPx + hPaddingInSelection;
   }
 
   // Title baseline-top offset within the row. Single-line rows center the title
@@ -327,12 +320,12 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
     }
 
     if (rowIcon != nullptr) {
-      UIIcon icon = rowIcon(i);
-      const uint8_t* iconBitmap = iconForName(icon, iconSize);
-      if (iconBitmap != nullptr) {
-        const int iconDrawY = iconYForText(renderer, UI_10_FONT_ID, titleTop, iconSize);
-        renderer.drawIcon(iconBitmap, rect.x + M().contentSidePadding + hPaddingInSelection, iconDrawY, iconSize,
-                          iconSize);
+      const freeink::Icon* ic = pickIcon(rowIcon(i), drawnIconPx);
+      if (ic != nullptr) {
+        // Place the icon's baked-in optical center on the title's optical center.
+        const int textCenter = titleTop + renderer.getTextVisualCenterOffset(UI_10_FONT_ID);
+        renderer.drawIcon(*ic, rect.x + M().contentSidePadding + hPaddingInSelection,
+                          textCenter - ic->opticalCenterY);
       }
     }
 
@@ -591,12 +584,12 @@ void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
     const int textY = tileRect.y + (rowHeight - lineHeight) / 2;
 
     if (rowIcon != nullptr) {
-      UIIcon icon = rowIcon(i);
-      const uint8_t* iconBitmap = iconForName(icon, mainMenuIconSize);
-      if (iconBitmap != nullptr) {
-        const int iconY = iconYForText(renderer, UI_12_FONT_ID, textY, mainMenuIconSize);
-        renderer.drawIcon(iconBitmap, textX, iconY, mainMenuIconSize, mainMenuIconSize);
-        textX += mainMenuIconSize + hPaddingInSelection + 2;
+      const freeink::Icon* ic = pickIcon(rowIcon(i), scaledIcon(mainMenuIconSize));
+      if (ic != nullptr) {
+        // Place the icon's baked-in optical center on the label's optical center.
+        const int textCenter = textY + renderer.getTextVisualCenterOffset(UI_12_FONT_ID);
+        renderer.drawIcon(*ic, textX, textCenter - ic->opticalCenterY);
+        textX += ic->w + hPaddingInSelection + 2;
       }
     }
 

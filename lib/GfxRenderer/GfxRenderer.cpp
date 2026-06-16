@@ -3,6 +3,7 @@
 #include <BidiUtils.h>
 #include <FontDecompressor.h>
 #include <HalGPIO.h>
+#include <Icon.h>
 #include <Logging.h>
 #include <SdCardFont.h>
 #include <Utf8.h>
@@ -905,6 +906,22 @@ void GfxRenderer::drawIcon(const uint8_t bitmap[], const int x, const int y, con
   display.drawImageTransparent(bitmap, y, getScreenWidth() - width - x, height, width);
 }
 
+void GfxRenderer::drawIcon(const freeink::Icon& icon, const int x, const int y, const bool black) const {
+  // Orientation-correct blit: the bits are stored un-rotated, so each black pixel
+  // goes through drawPixel (which applies the current orientation transform). The
+  // legacy uint8_t* overload above pre-rotates and is locked to one orientation;
+  // freeink::Icon assets are correct in every orientation.
+  const int rowBytes = (icon.w + 7) / 8;
+  for (int row = 0; row < icon.h; ++row) {
+    const uint8_t* r = icon.bits + static_cast<int>(row) * rowBytes;
+    for (int col = 0; col < icon.w; ++col) {
+      if (((r[col >> 3] >> (7 - (col & 7))) & 1) == 0) {  // 0 = drawn
+        drawPixel(x + col, y + row, black);
+      }
+    }
+  }
+}
+
 void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, const int maxWidth, const int maxHeight,
                              const float cropX, const float cropY) const {
   if (fontCacheManager_ && fontCacheManager_->isScanning()) return;
@@ -1572,14 +1589,15 @@ int GfxRenderer::getFontXHeight(const int fontId) const { return glyphTop(fontId
 
 int GfxRenderer::getTextVisualCenterOffset(const int fontId) const {
   // Distance from drawText's y (text top) down to the text's optical middle. The
-  // baseline is at y + ascender; the lowercase mass is centered at half the
-  // x-height above it, so the optical center is ascender - xHeight/2 below the top.
-  // x-height-based (UI text is lowercase-heavy); falls back to ascender*0.7 if the
-  // 'x' glyph is missing. Scales with the font, so no per-size tweaking.
+  // baseline is at y + ascender; the capitals reach capHeight above it, so the cap
+  // middle is ascender - capHeight/2 below the top. Cap-height (not x-height): UI
+  // labels are capital-led, so the eye centers on the caps — x-height sits a few px
+  // low. Falls back to ascender*0.65 if the 'H' glyph is missing. Scales with the
+  // font, so no per-size tweaking.
   const int ascender = getFontAscenderSize(fontId);
-  const int xHeight = getFontXHeight(fontId);
-  if (xHeight <= 0) return (ascender * 7) / 10;
-  return ascender - xHeight / 2;
+  const int capHeight = getFontCapHeight(fontId);
+  if (capHeight <= 0) return (ascender * 65) / 100;
+  return ascender - capHeight / 2;
 }
 
 void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y, const char* text, const bool black,

@@ -50,10 +50,10 @@ ThemeMetrics scaleThemeMetrics(const ThemeMetrics& b, float s) {
   m.homeMenuTopOffset = sp(b.homeMenuTopOffset, s);
   m.buttonHintsHeight = sp(b.buttonHintsHeight, s);
   m.sideButtonHintsWidth = sp(b.sideButtonHintsWidth, s);
-  m.progressBarHeight = sp(b.progressBarHeight, s);
-  m.progressBarMarginTop = sp(b.progressBarMarginTop, s);
-  m.statusBarHorizontalMargin = sp(b.statusBarHorizontalMargin, s);
-  m.statusBarVerticalMargin = sp(b.statusBarVerticalMargin, s);
+  // Status-bar metrics are intentionally NOT scaled: it's compact reader chrome
+  // (with the un-remapped SMALL font), and scaling it would eat reading area and
+  // bloat the customise-status-bar preview. progressBarHeight / progressBarMarginTop
+  // / statusBar*Margin keep their base values.
   m.keyboardKeyWidth = sp(b.keyboardKeyWidth, s);
   m.keyboardKeyHeight = sp(b.keyboardKeyHeight, s);
   m.keyboardKeySpacing = sp(b.keyboardKeySpacing, s);

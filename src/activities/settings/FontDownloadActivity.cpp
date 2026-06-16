@@ -431,6 +431,11 @@ void FontDownloadActivity::loop() {
 
     const int listSize = listItemCount();
     const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
+    // Vertical swipe page-scrolls the list (touch nav without the side buttons).
+    if (mappedInput.wasListScroll(selectedIndex_, listSize, pageItems)) {
+      requestUpdate();
+      return;
+    }
 
     buttonNavigator_.onNextRelease([this, listSize] {
       selectedIndex_ = ButtonNavigator::nextIndex(selectedIndex_, listSize);

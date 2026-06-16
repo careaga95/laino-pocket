@@ -2,6 +2,7 @@
 
 #include <GfxRenderer.h>
 
+#include <algorithm>
 #include <cstdlib>
 
 #include "CrossPointSettings.h"
@@ -116,6 +117,21 @@ bool MappedInputManager::wasCoverTapped(int& id) const {
   int lx = 0, ly = 0;
   renderer.tapToLogical(nx, ny, lx, ly);
   return TouchRegistry::getInstance().hitTest(lx, ly, TouchRegistry::Cover, id);
+}
+
+bool MappedInputManager::wasListScroll(int& index, int count, int pageItems) const {
+  if (count <= 0) return false;
+  if (pageItems < 1) pageItems = 1;
+  const SwipeDir swipe = wasSwipe();
+  if (swipe == SwipeDir::Up) {
+    index = std::min(index + pageItems, count - 1);
+    return true;
+  }
+  if (swipe == SwipeDir::Down) {
+    index = std::max(index - pageItems, 0);
+    return true;
+  }
+  return false;
 }
 
 MappedInputManager::SwipeDir MappedInputManager::wasSwipe() const {

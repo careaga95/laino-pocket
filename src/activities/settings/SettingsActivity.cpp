@@ -130,6 +130,17 @@ void SettingsActivity::loop() {
     selectedSettingIndex = 0;
     hasChangedCategory = true;
     requestUpdate();
+  } else if (swipe == MappedInputManager::SwipeDir::Up || swipe == MappedInputManager::SwipeDir::Down) {
+    // Vertical swipe scrolls the settings list a page at a time (touch navigation
+    // without the side buttons). Swipe up moves down the list, and vice versa.
+    const int page = std::max(
+        1, UITheme::getNumberOfItemsPerPage(renderer, true, true, BaseTheme::showButtonHints(), false));
+    if (swipe == MappedInputManager::SwipeDir::Up) {
+      selectedSettingIndex = std::min(selectedSettingIndex + page, settingsCount);
+    } else {
+      selectedSettingIndex = std::max(selectedSettingIndex - page, 0);
+    }
+    requestUpdate();
   }
 
   // Tap a settings row to select + activate it. Row 0 is the tab bar, so the list

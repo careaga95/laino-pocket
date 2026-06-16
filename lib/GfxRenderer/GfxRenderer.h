@@ -13,6 +13,9 @@ enum class BidiBaseDir : signed char { AUTO = -1, LTR = 0, RTL = 1 };
 
 class FontCacheManager;
 class SdCardFont;
+namespace freeink {
+struct Icon;
+}
 
 #include <cstring>
 #include <map>
@@ -102,6 +105,9 @@ class GfxRenderer {
   // Setup
   void begin();  // must be called right after display.begin()
   void insertFont(int fontId, EpdFontFamily font);
+  // Orientation-correct icon blit for the freeink::Icon format (un-rotated bits +
+  // optical-center metadata). Prefer this over the legacy raw-bitmap drawIcon.
+  void drawIcon(const freeink::Icon& icon, int x, int y, bool black = true) const;
   // UI chrome font scaling: firmware supplies a small remap table (from the board
   // uiScale) that substitutes a larger font for each scaled UI font id at lookup
   // time, so layout and drawing stay consistent with no call-site changes. Reader

@@ -31,6 +31,12 @@ void EpubReaderChapterSelectionActivity::loop() {
   const int pageItems = UITheme::getInstance().getNumberOfItemsPerPage(renderer, true, false, true, false);
   const int totalItems = getTotalItems();
 
+  // Vertical swipe page-scrolls the list (touch nav without the side buttons).
+  if (mappedInput.wasListScroll(selectorIndex, totalItems, pageItems)) {
+    requestUpdate();
+    return;
+  }
+
   int downId = -1;
   if (mappedInput.wasItemTouchedDown(downId) && downId >= 0 && downId < totalItems) {
     selectorIndex = downId;

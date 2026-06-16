@@ -57,6 +57,13 @@ void EpubReaderMenuActivity::loop() {
     requestUpdate();
   });
 
+  // Vertical swipe page-scrolls the menu (touch nav without the side buttons).
+  if (mappedInput.wasListScroll(selectedIndex, static_cast<int>(menuItems.size()),
+                                UITheme::getInstance().getNumberOfItemsPerPage(renderer, true, false, true, false))) {
+    requestUpdate();
+    return;
+  }
+
   // Touch-down moves the selection to the pressed item (shows selected state), like
   // moving with Up/Down; release activates it below.
   int downId = -1;

@@ -104,6 +104,12 @@ void EpubReaderBookmarksActivity::loop() {
   }
 
   if (confirmingDelete < DELETE_MODE_DISPLAY) {
+    // Vertical swipe page-scrolls the list (touch nav without the side buttons).
+    const int pageItems = GUI.getListPageItems(getListHeight(renderer), true);
+    if (mappedInput.wasListScroll(selectorIndex, static_cast<int>(bookmarks.size()), pageItems)) {
+      requestUpdate();
+      return;
+    }
     int downId = -1;
     if (mappedInput.wasItemTouchedDown(downId) && downId >= 0 && downId < static_cast<int>(bookmarks.size())) {
       selectorIndex = downId;

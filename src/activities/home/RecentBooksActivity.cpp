@@ -44,6 +44,14 @@ void RecentBooksActivity::onExit() {
 void RecentBooksActivity::loop() {
   const int pageItems = UITheme::getInstance().getNumberOfItemsPerPage(renderer, true, false, true, true);
 
+  // Vertical swipe page-scrolls the list (touch nav without the side buttons).
+  int scrollIdx = static_cast<int>(selectorIndex);
+  if (mappedInput.wasListScroll(scrollIdx, static_cast<int>(recentBooks.size()), pageItems)) {
+    selectorIndex = scrollIdx;
+    requestUpdate();
+    return;
+  }
+
   // After a long-press has fired, swallow input until Confirm is physically released
   // (so the release doesn't also open the book; re-arm only once the button is up).
   if (longPressFired) {

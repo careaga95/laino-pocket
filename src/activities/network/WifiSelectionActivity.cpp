@@ -409,6 +409,14 @@ void WifiSelectionActivity::loop() {
 
   // Handle network list state
   if (state == WifiSelectionState::NETWORK_LIST) {
+    // Vertical swipe page-scrolls the network list (touch nav without the side buttons).
+    int scrollIdx = static_cast<int>(selectedNetworkIndex);
+    if (mappedInput.wasListScroll(scrollIdx, static_cast<int>(networks.size()),
+                                  UITheme::getInstance().getNumberOfItemsPerPage(renderer, true, false, true, false))) {
+      selectedNetworkIndex = scrollIdx;
+      requestUpdate();
+      return;
+    }
     // Touch: down-select highlights the pressed network, tap selects it (like Confirm).
     int downId = -1;
     if (mappedInput.wasItemTouchedDown(downId) && downId >= 0 && downId < static_cast<int>(networks.size())) {

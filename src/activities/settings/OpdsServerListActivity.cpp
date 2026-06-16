@@ -41,6 +41,13 @@ void OpdsServerListActivity::loop() {
     return;
   }
 
+  // Vertical swipe page-scrolls the list (touch nav without the side buttons).
+  if (mappedInput.wasListScroll(selectedIndex, getItemCount(),
+                                UITheme::getInstance().getNumberOfItemsPerPage(renderer, true, false, true, false))) {
+    requestUpdate();
+    return;
+  }
+
   int downId = -1;
   if (mappedInput.wasItemTouchedDown(downId) && downId >= 0) {
     selectedIndex = downId;
