@@ -25,6 +25,20 @@ void IntervalSelectionActivity::adjustValue(const int delta) {
   requestUpdate();
 }
 
+bool IntervalSelectionActivity::setValueFromTouch(const int x, const int y) {
+  const int screenWidth = renderer.getScreenWidth();
+  const int barWidth = std::min(360, std::max(0, screenWidth - 40));
+  constexpr int barHeight = 16;
+  const int barX = std::max(0, (screenWidth - barWidth) / 2);
+  const int barY = 140;
+  if (y < barY - 28 || y > barY + barHeight + 36 || x < barX - 20 || x > barX + barWidth + 20) return false;
+
+  const int clampedX = std::max(barX, std::min(x, barX + barWidth));
+  const int range = std::max(1, maxValue - minValue);
+  value = clampedValue(minValue + (clampedX - barX) * range / std::max(1, barWidth));
+  return true;
+}
+
 void IntervalSelectionActivity::loop() {
   if (ignoreConfirmRelease) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
@@ -45,6 +59,31 @@ void IntervalSelectionActivity::loop() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    setResult(IntervalResult{static_cast<uint32_t>(value)});
+    finish();
+    return;
+  }
+
+  switch (mappedInput.wasSwipe()) {
+    case MappedInputManager::SwipeDir::Left:
+      adjustValue(-smallStep);
+      return;
+    case MappedInputManager::SwipeDir::Right:
+      adjustValue(smallStep);
+      return;
+    case MappedInputManager::SwipeDir::Up:
+      adjustValue(largeStep);
+      return;
+    case MappedInputManager::SwipeDir::Down:
+      adjustValue(-largeStep);
+      return;
+    case MappedInputManager::SwipeDir::None:
+      break;
+  }
+
+  int tapX = 0;
+  int tapY = 0;
+  if (mappedInput.wasScreenTapped(tapX, tapY) && setValueFromTouch(tapX, tapY)) {
     setResult(IntervalResult{static_cast<uint32_t>(value)});
     finish();
     return;

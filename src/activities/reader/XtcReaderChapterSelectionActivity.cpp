@@ -1,11 +1,13 @@
 #include "XtcReaderChapterSelectionActivity.h"
 
+#include <FreeInkUI.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 
 #include <algorithm>
 
 #include "MappedInputManager.h"
+#include "components/TouchRegistry.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -59,6 +61,20 @@ void XtcReaderChapterSelectionActivity::loop() {
   // Vertical swipe page-scrolls the list (touch nav without the side buttons).
   if (mappedInput.wasListScroll(selectorIndex, totalItems, pageItems)) {
     requestUpdate();
+    return;
+  }
+
+  int downId = -1;
+  if (mappedInput.wasItemTouchedDown(downId) && freeink::ui::listSelectIndex(selectorIndex, downId, totalItems)) {
+    requestUpdate();
+  }
+
+  int tappedId = -1;
+  if (mappedInput.wasItemTapped(tappedId) && tappedId >= 0 && tappedId < totalItems) {
+    selectorIndex = tappedId;
+    const auto& chapters = xtc->getChapters();
+    setResult(PageResult{chapters[selectorIndex].startPage});
+    finish();
     return;
   }
 
@@ -133,7 +149,9 @@ void XtcReaderChapterSelectionActivity::render(RenderLock&&) {
   for (int i = pageStartIndex; i < static_cast<int>(chapters.size()) && i < pageStartIndex + pageItems; i++) {
     const auto& chapter = chapters[i];
     const char* title = chapter.name.empty() ? tr(STR_UNNAMED) : chapter.name.c_str();
-    renderer.drawText(UI_10_FONT_ID, contentX + 20, 60 + contentY + (i % pageItems) * 30, title, i != selectorIndex);
+    const int itemY = 60 + contentY + (i % pageItems) * 30;
+    renderer.drawText(UI_10_FONT_ID, contentX + 20, itemY, title, i != selectorIndex);
+    TouchRegistry::getInstance().add(Rect{contentX, itemY - 2, contentWidth, 30}, i, TouchRegistry::Item);
   }
 
   // Skip button hints in landscape CW mode (they overlap content)

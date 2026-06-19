@@ -49,4 +49,5 @@ class IntervalSelectionActivity final : public Activity {
 
   void adjustValue(int delta);
   int clampedValue(int candidate) const;
+  bool setValueFromTouch(int x, int y);
 };

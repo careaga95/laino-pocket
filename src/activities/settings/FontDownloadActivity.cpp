@@ -2,6 +2,7 @@
 
 #include <ArduinoJson.h>
 #include <GfxRenderer.h>
+#include <FreeInkUI.h>
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
@@ -420,6 +421,38 @@ bool FontDownloadActivity::isSelectedFamilyDeletable() const {
   return family.installed && !family.hasUpdate;
 }
 
+void FontDownloadActivity::activateSelectedItem() {
+  if (families_.empty()) return;
+
+  if (isDownloadAllRow(selectedIndex_)) {
+    currentFileIndex_ = 0;
+    currentFileTotal_ = 0;
+    for (const auto& f : families_) {
+      if (!f.installed) currentFileTotal_ += f.files.size();
+    }
+
+    downloadAll();
+  } else if (isUpdateAllRow(selectedIndex_)) {
+    currentFileIndex_ = 0;
+    currentFileTotal_ = 0;
+    for (const auto& f : families_) {
+      if (f.hasUpdate) currentFileTotal_ += f.files.size();
+    }
+    updateAll();
+  } else {
+    auto& family = families_[familyIndexFromList(selectedIndex_)];
+    if (!family.installed || family.hasUpdate) {
+      currentFileIndex_ = 0;
+      currentFileTotal_ = family.files.size();
+      downloadFamily(family);
+    } else {
+      promptDeleteSelectedFamily();
+      return;
+    }
+  }
+  requestUpdateAndWait();
+}
+
 // --- Input handling ---
 
 void FontDownloadActivity::loop() {
@@ -434,6 +467,18 @@ void FontDownloadActivity::loop() {
     // Vertical swipe page-scrolls the list (touch nav without the side buttons).
     if (mappedInput.wasListScroll(selectedIndex_, listSize, pageItems)) {
       requestUpdate();
+      return;
+    }
+
+    int downId = -1;
+    if (mappedInput.wasItemTouchedDown(downId) && freeink::ui::listSelectIndex(selectedIndex_, downId, listSize)) {
+      requestUpdate();
+    }
+
+    int tappedId = -1;
+    if (mappedInput.wasItemTapped(tappedId) && tappedId >= 0 && tappedId < listSize) {
+      selectedIndex_ = tappedId;
+      activateSelectedItem();
       return;
     }
 
@@ -458,36 +503,8 @@ void FontDownloadActivity::loop() {
     });
 
     if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-      if (!families_.empty()) {
-        if (isDownloadAllRow(selectedIndex_)) {
-          currentFileIndex_ = 0;
-          currentFileTotal_ = 0;
-          for (const auto& f : families_) {
-            if (!f.installed) currentFileTotal_ += f.files.size();
-          }
-
-          downloadAll();
-        } else if (isUpdateAllRow(selectedIndex_)) {
-          currentFileIndex_ = 0;
-          currentFileTotal_ = 0;
-          for (const auto& f : families_) {
-            if (f.hasUpdate) currentFileTotal_ += f.files.size();
-          }
-          updateAll();
-        } else {
-          auto& family = families_[familyIndexFromList(selectedIndex_)];
-          if (!family.installed || family.hasUpdate) {
-            currentFileIndex_ = 0;
-            currentFileTotal_ = family.files.size();
-            downloadFamily(family);
-          } else {
-            promptDeleteSelectedFamily();
-            return;
-          }
-        }
-        requestUpdateAndWait();
-        return;
-      }
+      activateSelectedItem();
+      return;
     }
   } else if (state_ == COMPLETE) {
     if (mappedInput.wasPressed(MappedInputManager::Button::Back) ||

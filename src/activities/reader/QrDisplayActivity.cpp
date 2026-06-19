@@ -21,6 +21,13 @@ void QrDisplayActivity::loop() {
     finish();
     return;
   }
+
+  int tapX = 0;
+  int tapY = 0;
+  if (mappedInput.wasScreenTapped(tapX, tapY)) {
+    finish();
+    return;
+  }
 }
 
 void QrDisplayActivity::render(RenderLock&&) {

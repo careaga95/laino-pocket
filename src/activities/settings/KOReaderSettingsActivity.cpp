@@ -11,6 +11,7 @@
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include <FreeInkUI.h>
 
 namespace {
 constexpr int MENU_ITEMS = 5;
@@ -30,6 +31,19 @@ void KOReaderSettingsActivity::onExit() { Activity::onExit(); }
 void KOReaderSettingsActivity::loop() {
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
     finish();
+    return;
+  }
+
+  int downId = -1;
+  if (mappedInput.wasItemTouchedDown(downId) && freeink::ui::listSelectIndex(selectedIndex, downId, MENU_ITEMS)) {
+    requestUpdate();
+  }
+
+  int tappedId = -1;
+  if (mappedInput.wasItemTapped(tappedId) && tappedId >= 0 && tappedId < MENU_ITEMS) {
+    selectedIndex = tappedId;
+    handleSelection();
+    requestUpdate();
     return;
   }
 

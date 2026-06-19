@@ -1,11 +1,13 @@
 #include "EpubReaderFootnotesActivity.h"
 
+#include <FreeInkUI.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 
 #include <algorithm>
 
 #include "MappedInputManager.h"
+#include "components/TouchRegistry.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -18,6 +20,26 @@ void EpubReaderFootnotesActivity::onEnter() {
 void EpubReaderFootnotesActivity::onExit() { Activity::onExit(); }
 
 void EpubReaderFootnotesActivity::loop() {
+  const int visibleCount = std::max(1, renderer.getScreenHeight() / 36);
+  if (mappedInput.wasListScroll(selectedIndex, static_cast<int>(footnotes.size()), visibleCount)) {
+    requestUpdate();
+    return;
+  }
+
+  int downId = -1;
+  if (mappedInput.wasItemTouchedDown(downId) &&
+      freeink::ui::listSelectIndex(selectedIndex, downId, static_cast<int>(footnotes.size()))) {
+    requestUpdate();
+  }
+
+  int tappedId = -1;
+  if (mappedInput.wasItemTapped(tappedId) && tappedId >= 0 && tappedId < static_cast<int>(footnotes.size())) {
+    selectedIndex = tappedId;
+    setResult(FootnoteResult{footnotes[selectedIndex].href});
+    finish();
+    return;
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     ActivityResult result;
     result.isCancelled = true;
@@ -102,6 +124,7 @@ void EpubReaderFootnotesActivity::render(RenderLock&&) {
       label = tr(STR_LINK);
     }
     renderer.drawText(UI_10_FONT_ID, marginLeft, y + 4, label.c_str(), !isSelected);
+    TouchRegistry::getInstance().add(Rect{contentX, y, contentWidth, lineHeight}, i, TouchRegistry::Item);
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), "", "");

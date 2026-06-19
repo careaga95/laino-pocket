@@ -122,6 +122,27 @@ void ClearCacheActivity::clearCache() {
 
 void ClearCacheActivity::loop() {
   if (state == WARNING) {
+    int tapX = 0;
+    int tapY = 0;
+    if (mappedInput.wasScreenTapped(tapX, tapY)) {
+      const int actionTop = renderer.getScreenHeight() - UITheme::getInstance().getMetrics().buttonHintsHeight - 12;
+      if (tapY >= actionTop) {
+        if (tapX < renderer.getScreenWidth() / 2) {
+          LOG_DBG("CLEAR_CACHE", "User cancelled via touch");
+          goBack();
+        } else {
+          LOG_DBG("CLEAR_CACHE", "User confirmed via touch, starting cache clear");
+          {
+            RenderLock lock(*this);
+            state = CLEARING;
+          }
+          requestUpdateAndWait();
+          clearCache();
+        }
+        return;
+      }
+    }
+
     if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
       LOG_DBG("CLEAR_CACHE", "User confirmed, starting cache clear");
       {
@@ -141,7 +162,9 @@ void ClearCacheActivity::loop() {
   }
 
   if (state == SUCCESS || state == FAILED) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    int tapX = 0;
+    int tapY = 0;
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(tapX, tapY)) {
       goBack();
     }
     return;

@@ -39,6 +39,8 @@ class MappedInputManager {
   // (id = item index). Distinct kinds so a screen with both doesn't confuse them.
   bool wasTabTapped(int& id) const;
   bool wasCoverTapped(int& id) const;
+  // True on a touch release anywhere on screen, with logical/oriented coords.
+  bool wasScreenTapped(int& x, int& y) const;
   // Swipe direction in the current logical (oriented) frame, or None. A swipe also
   // raises the tap helpers above, so check this first and consume it.
   SwipeDir wasSwipe() const;

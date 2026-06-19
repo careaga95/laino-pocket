@@ -11,6 +11,7 @@
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include <FreeInkUI.h>
 
 namespace {
 // Editable fields: Name, URL, Username, Password.
@@ -53,12 +54,26 @@ void OpdsSettingsActivity::loop() {
     return;
   }
 
+  const int menuItems = getMenuItemCount();
+
+  int downId = -1;
+  if (mappedInput.wasItemTouchedDown(downId) && freeink::ui::listSelectIndex(selectedIndex, downId, menuItems)) {
+    requestUpdate();
+  }
+
+  int tappedId = -1;
+  if (mappedInput.wasItemTapped(tappedId) && tappedId >= 0 && tappedId < menuItems) {
+    selectedIndex = tappedId;
+    handleSelection();
+    requestUpdate();
+    return;
+  }
+
   if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
     handleSelection();
     return;
   }
 
-  const int menuItems = getMenuItemCount();
   buttonNavigator.onNext([this, menuItems] {
     selectedIndex = (selectedIndex + 1) % menuItems;
     requestUpdate();

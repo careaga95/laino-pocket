@@ -62,6 +62,13 @@ void ClockSyncActivity::loop() {
   if (mappedInput.wasPressed(MappedInputManager::Button::Back) ||
       mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
     finish();
+    return;
+  }
+
+  int tapX = 0;
+  int tapY = 0;
+  if (mappedInput.wasScreenTapped(tapX, tapY)) {
+    finish();
   }
 }
 

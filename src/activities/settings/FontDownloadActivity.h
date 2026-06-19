@@ -99,6 +99,7 @@ class FontDownloadActivity : public Activity {
   bool isDownloadAllRow(int index) const;
   bool isUpdateAllRow(int index) const;
   bool isSelectedFamilyDeletable() const;
+  void activateSelectedItem();
   void promptDeleteSelectedFamily();
   void onDeleteConfirmationResult(const ActivityResult& result);
   int familyIndexFromList(int listIndex) const { return listIndex - specialRowCount(); }

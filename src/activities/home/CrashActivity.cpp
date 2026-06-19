@@ -20,7 +20,9 @@ void CrashActivity::onEnter() {
 }
 
 void CrashActivity::loop() {
-  if (mappedInput.isPressed(MappedInputManager::Button::Back)) {
+  int tapX = 0;
+  int tapY = 0;
+  if (mappedInput.isPressed(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(tapX, tapY)) {
     finish();
   }
 }

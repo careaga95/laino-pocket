@@ -145,7 +145,21 @@ void OtaUpdateActivity::render(RenderLock&&) {
 
 void OtaUpdateActivity::loop() {
   if (state == WAITING_CONFIRMATION) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+    int tapX = 0;
+    int tapY = 0;
+    bool touchUpdate = false;
+    if (mappedInput.wasScreenTapped(tapX, tapY)) {
+      const int actionTop = renderer.getScreenHeight() - UITheme::getInstance().getMetrics().buttonHintsHeight - 12;
+      if (tapY >= actionTop) {
+        if (tapX < renderer.getScreenWidth() / 2) {
+          finish();
+          return;
+        }
+        touchUpdate = true;
+      }
+    }
+
+    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm) || touchUpdate) {
       LOG_DBG("OTA", "New update available, starting download...");
       {
         RenderLock lock(*this);
@@ -192,14 +206,18 @@ void OtaUpdateActivity::loop() {
   }
 
   if (state == FAILED) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    int tapX = 0;
+    int tapY = 0;
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(tapX, tapY)) {
       finish();
     }
     return;
   }
 
   if (state == NO_UPDATE) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    int tapX = 0;
+    int tapY = 0;
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(tapX, tapY)) {
       finish();
     }
     return;

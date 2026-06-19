@@ -24,4 +24,5 @@ class EpubReaderPercentSelectionActivity final : public Activity {
 
   // Change the current percent by a delta and clamp within bounds.
   void adjustPercent(int delta);
+  bool setPercentFromTouch(int x, int y);
 };

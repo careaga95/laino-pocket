@@ -1,5 +1,6 @@
 #include "MappedInputManager.h"
 
+#include <FreeInkUI.h>
 #include <GfxRenderer.h>
 
 #include <algorithm>
@@ -162,18 +163,23 @@ bool MappedInputManager::wasCoverTapped(int& id) const {
   return TouchRegistry::getInstance().hitTest(lx, ly, TouchRegistry::Cover, id);
 }
 
+bool MappedInputManager::wasScreenTapped(int& x, int& y) const {
+  float nx = 0.0f, ny = 0.0f;
+  if (!gpio.wasTouchTap(nx, ny)) return false;
+  renderer.tapToLogical(nx, ny, x, y);
+  return true;
+}
+
 bool MappedInputManager::wasListScroll(int& index, int count, int pageItems) const {
   if (count <= 0) return false;
   if (pageItems < 1) pageItems = 1;
   if (wasBottomEdgeSwipeUp()) return false;
   const SwipeDir swipe = wasSwipe();
   if (swipe == SwipeDir::Up) {
-    index = std::min(index + pageItems, count - 1);
-    return true;
+    return freeink::ui::listPageIndex(index, +1, count, pageItems);
   }
   if (swipe == SwipeDir::Down) {
-    index = std::max(index - pageItems, 0);
-    return true;
+    return freeink::ui::listPageIndex(index, -1, count, pageItems);
   }
   return false;
 }

@@ -1,6 +1,7 @@
 #include "OpdsBookBrowserActivity.h"
 
 #include <GfxRenderer.h>
+#include <FreeInkUI.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <OpdsStream.h>
@@ -10,6 +11,7 @@
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
+#include "components/TouchRegistry.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
@@ -91,11 +93,28 @@ void OpdsBookBrowserActivity::loop() {
   if (state == BrowserState::DOWNLOADING) return;
 
   if (state == BrowserState::BROWSING) {
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-      if (!entries.empty()) {
-        const auto& entry = entries[selectorIndex];
-        entry.type == OpdsEntryType::BOOK ? downloadBook(entry) : navigateToEntry(entry);
+    if (!entries.empty()) {
+      if (mappedInput.wasListScroll(selectorIndex, static_cast<int>(entries.size()), PAGE_ITEMS)) {
+        requestUpdate();
+        return;
       }
+
+      int downId = -1;
+      if (mappedInput.wasItemTouchedDown(downId) &&
+          freeink::ui::listSelectIndex(selectorIndex, downId, static_cast<int>(entries.size()))) {
+        requestUpdate();
+      }
+
+      int tappedId = -1;
+      if (mappedInput.wasItemTapped(tappedId) && tappedId >= 0 && tappedId < static_cast<int>(entries.size())) {
+        selectorIndex = tappedId;
+        activateSelectedEntry();
+        return;
+      }
+    }
+
+    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      activateSelectedEntry();
     } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       navigateBack();
     } else if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
@@ -178,11 +197,18 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
       std::string displayText = (entry.type == OpdsEntryType::NAVIGATION) ? "> " + entry.title : entry.title;
       if (entry.type == OpdsEntryType::BOOK && !entry.author.empty()) displayText += " - " + entry.author;
       auto item = renderer.truncatedText(UI_10_FONT_ID, displayText.c_str(), pageWidth - 40);
-      renderer.drawText(UI_10_FONT_ID, 20, 60 + (i % PAGE_ITEMS) * 30, item.c_str(),
-                        i != static_cast<size_t>(selectorIndex));
+      const int itemY = 60 + (i % PAGE_ITEMS) * 30;
+      renderer.drawText(UI_10_FONT_ID, 20, itemY, item.c_str(), i != static_cast<size_t>(selectorIndex));
+      TouchRegistry::getInstance().add(Rect{0, itemY - 2, pageWidth, 30}, static_cast<int>(i), TouchRegistry::Item);
     }
   }
   renderer.displayBuffer();
+}
+
+void OpdsBookBrowserActivity::activateSelectedEntry() {
+  if (entries.empty() || selectorIndex < 0 || selectorIndex >= static_cast<int>(entries.size())) return;
+  const auto& entry = entries[selectorIndex];
+  entry.type == OpdsEntryType::BOOK ? downloadBook(entry) : navigateToEntry(entry);
 }
 
 void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {

@@ -3,6 +3,8 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
+#include <algorithm>
+
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -32,6 +34,22 @@ void EpubReaderPercentSelectionActivity::adjustPercent(const int delta) {
   requestUpdate();
 }
 
+bool EpubReaderPercentSelectionActivity::setPercentFromTouch(const int x, const int y) {
+  auto& theme = UITheme::getInstance();
+  const auto metrics = theme.getMetrics();
+  const Rect screen = theme.getScreenSafeArea(renderer, true, false);
+  const int contentTop = screen.y + metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing * 4;
+  constexpr int barWidth = 360;
+  constexpr int barHeight = 16;
+  const int barX = screen.x + (screen.width - barWidth) / 2;
+  const int barY = contentTop + metrics.verticalSpacing * 2;
+  if (y < barY - 28 || y > barY + barHeight + 36 || x < barX - 20 || x > barX + barWidth + 20) return false;
+
+  const int clampedX = std::max(barX, std::min(x, barX + barWidth));
+  percent = (clampedX - barX) * 100 / barWidth;
+  return true;
+}
+
 void EpubReaderPercentSelectionActivity::loop() {
   // Back cancels, confirm selects, arrows adjust the percent.
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
@@ -43,6 +61,31 @@ void EpubReaderPercentSelectionActivity::loop() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    setResult(PercentResult{percent});
+    finish();
+    return;
+  }
+
+  switch (mappedInput.wasSwipe()) {
+    case MappedInputManager::SwipeDir::Left:
+      adjustPercent(-kSmallStep);
+      return;
+    case MappedInputManager::SwipeDir::Right:
+      adjustPercent(kSmallStep);
+      return;
+    case MappedInputManager::SwipeDir::Up:
+      adjustPercent(kLargeStep);
+      return;
+    case MappedInputManager::SwipeDir::Down:
+      adjustPercent(-kLargeStep);
+      return;
+    case MappedInputManager::SwipeDir::None:
+      break;
+  }
+
+  int tapX = 0;
+  int tapY = 0;
+  if (mappedInput.wasScreenTapped(tapX, tapY) && setPercentFromTouch(tapX, tapY)) {
     setResult(PercentResult{percent});
     finish();
     return;

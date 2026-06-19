@@ -185,6 +185,36 @@ void BmpViewerActivity::loop() {
     return;
   }
 
+  const auto swipe = mappedInput.wasSwipe();
+  if (swipe == MappedInputManager::SwipeDir::Right) {
+    if (siblingImages.size() > 1 && currentImageIndex > 0) {
+      currentImageIndex--;
+      std::string dirPath = FsHelpers::extractFolderPath(filePath);
+      if (dirPath.back() != '/') dirPath += "/";
+      filePath = dirPath + siblingImages[currentImageIndex];
+      onEnter();
+    }
+    return;
+  }
+  if (swipe == MappedInputManager::SwipeDir::Left) {
+    if (siblingImages.size() > 1 && currentImageIndex != -1 &&
+        currentImageIndex < static_cast<int>(siblingImages.size()) - 1) {
+      currentImageIndex++;
+      std::string dirPath = FsHelpers::extractFolderPath(filePath);
+      if (dirPath.back() != '/') dirPath += "/";
+      filePath = dirPath + siblingImages[currentImageIndex];
+      onEnter();
+    }
+    return;
+  }
+
+  int tapX = 0;
+  int tapY = 0;
+  if (mappedInput.wasScreenTapped(tapX, tapY)) {
+    doSetSleepCover();
+    return;
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     doSetSleepCover();
     return;
