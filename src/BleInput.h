@@ -44,6 +44,6 @@ void describeKey(uint8_t kind, uint8_t value, char* out, size_t outLen);
 // Draw a "BT Connecting..." popup and pump the BLE host until the bonded remote
 // links, the user presses a button to dismiss, or a timeout. No-op if BLE isn't
 // running or is already connected. The caller must redraw afterward to clear it.
-void showConnectingUntilLinked(GfxRenderer& renderer, MappedInputManager& input);
+void showConnectingUntilLinked(const GfxRenderer& renderer, const MappedInputManager& input);
 
 }  // namespace bleinput

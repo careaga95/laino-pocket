@@ -2,7 +2,9 @@
 
 #include <GfxRenderer.h>
 
+#include <algorithm>
 #include <cstdio>
+#include <iterator>
 
 #include "BleInput.h"
 #include "CrossPointSettings.h"
@@ -31,7 +33,7 @@ void BleButtonMapActivity::onEnter() {
   // Start every mapping session from a clean slate: the user re-maps each remote
   // button once, so a button can't be left bound to a stale action and there's no
   // separate "clear mappings" step to remember.
-  for (auto& e : SETTINGS.bleKeyMap) e = CrossPointSettings::BleKeyMapEntry{};
+  std::fill(std::begin(SETTINGS.bleKeyMap), std::end(SETTINGS.bleKeyMap), CrossPointSettings::BleKeyMapEntry{});
   SETTINGS.saveToFile();
   mappedInput.setBleCaptureMode(true);
   requestUpdate();
@@ -44,32 +46,32 @@ void BleButtonMapActivity::onExit() {
 
 bool BleButtonMapActivity::assignCapturedKey(MappedInputManager::Button button) {
   const uint8_t btn = static_cast<uint8_t>(button);
+  auto& map = SETTINGS.bleKeyMap;
+  using Entry = CrossPointSettings::BleKeyMapEntry;
+  const uint8_t kind = capturedKind;
+  const uint8_t value = capturedValue;
+
   // One key per action: drop any other key currently bound to this action so the same
   // action can't be triggered by two different remote buttons.
-  for (auto& e : SETTINGS.bleKeyMap) {
-    if (e.button == btn && !(e.keyKind == capturedKind && e.keyValue == capturedValue)) {
-      e = CrossPointSettings::BleKeyMapEntry{};
-    }
+  std::replace_if(
+      std::begin(map), std::end(map),
+      [&](const Entry& e) { return e.button == btn && !(e.keyKind == kind && e.keyValue == value); }, Entry{});
+
+  // Reuse the slot already bound to this key, else the first free slot.
+  auto* slot = std::find_if(std::begin(map), std::end(map), [&](const Entry& e) {
+    return e.button != 0xFF && e.keyKind == kind && e.keyValue == value;
+  });
+  if (slot == std::end(map)) {
+    slot = std::find_if(std::begin(map), std::end(map),
+                        [](const Entry& e) { return e.button == 0xFF || e.keyKind == 0xFF; });
   }
-  // Update an existing binding for this key, if present.
-  for (auto& e : SETTINGS.bleKeyMap) {
-    if (e.button != 0xFF && e.keyKind == capturedKind && e.keyValue == capturedValue) {
-      e.button = btn;
-      SETTINGS.saveToFile();
-      return true;
-    }
-  }
-  // Otherwise take a free slot.
-  for (auto& e : SETTINGS.bleKeyMap) {
-    if (e.button == 0xFF || e.keyKind == 0xFF) {
-      e.keyKind = capturedKind;
-      e.keyValue = capturedValue;
-      e.button = btn;
-      SETTINGS.saveToFile();
-      return true;
-    }
-  }
-  return false;  // table full
+  if (slot == std::end(map)) return false;  // table full
+
+  slot->keyKind = kind;
+  slot->keyValue = value;
+  slot->button = btn;
+  SETTINGS.saveToFile();
+  return true;
 }
 
 void BleButtonMapActivity::loop() {

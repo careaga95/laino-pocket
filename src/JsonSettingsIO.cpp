@@ -5,7 +5,9 @@
 #include <Logging.h>
 #include <ObfuscationUtils.h>
 
+#include <algorithm>
 #include <cstring>
+#include <iterator>
 #include <string>
 
 #include "BookmarkEntry.h"
@@ -256,7 +258,7 @@ bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool*
 
   // Bluetooth — managed by BluetoothSettingsActivity, not in SettingsList.
   s.bluetoothEnabled = clamp(doc["bluetoothEnabled"] | (uint8_t)0, 2, 0);
-  for (auto& e : s.bleKeyMap) e = CrossPointSettings::BleKeyMapEntry{};  // reset to empty
+  std::fill(std::begin(s.bleKeyMap), std::end(s.bleKeyMap), CrossPointSettings::BleKeyMapEntry{});  // reset to empty
   JsonArrayConst bleMap = doc["bleKeyMap"];
   if (!bleMap.isNull()) {
     uint8_t slot = 0;

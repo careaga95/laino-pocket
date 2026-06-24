@@ -77,7 +77,7 @@ const char* specialName(uint8_t value) {
 }
 }  // namespace
 
-void showConnectingUntilLinked(GfxRenderer& renderer, MappedInputManager& input) {
+void showConnectingUntilLinked(const GfxRenderer& renderer, const MappedInputManager& input) {
   if (!BleHid.isRunning() || BleHid.isConnected()) return;
   // drawPopup refreshes the panel itself, so draw once and let e-ink hold it while we
   // pump the host. Holds until the remote links, the user presses a button to bail, or
