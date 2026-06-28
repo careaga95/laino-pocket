@@ -20,7 +20,7 @@ fi
 python3 "$SDK/libs/assets/Icons/tools/gen_icons.py" \
   --manifest "$ROOT/src/components/icons/icons.manifest" \
   --svgdir   "$SVGDIR" \
-  --sizes    24,32,40,48 \
+  --sizes    16,24,32,40,48 \
   --out      "$ROOT/src/components/icons/generated_icons.h"
 
 echo "Regenerated src/components/icons/generated_icons.h"

@@ -14,7 +14,7 @@
 #include "RecentBooksStore.h"
 #include "components/TouchRegistry.h"
 #include "components/UITheme.h"
-#include "components/icons/bookmark.h"
+#include "components/icons/generated_icons.h"
 #include "fontIds.h"
 
 // Internal constants
@@ -22,26 +22,16 @@ namespace {
 constexpr int homeMenuMargin = 20;
 constexpr int homeMarginTop = 30;
 constexpr int subtitleY = 738;
-constexpr int bookmarkStatusIconWidth = 16;
-constexpr int bookmarkStatusIconHeight = 14;
+// Status-bar bookmark indicator: the 16px Lucide bookmark from the FreeInk icon
+// pipeline (src/components/icons/generated_icons.h). Gap separates it from the
+// cluster to its left.
+constexpr int bookmarkStatusIconWidth = 16;  // == icon_bookmark_16.w
 constexpr int bookmarkStatusIconGap = 4;
-constexpr int bookmarkStatusIconTopCrop = 2;
 
 bool statusBarTextLaneVisible() {
   return SETTINGS.statusBarChapterPageCount || SETTINGS.statusBarBookProgressPercentage ||
          SETTINGS.statusBarTitle != CrossPointSettings::STATUS_BAR_TITLE::HIDE_TITLE || SETTINGS.statusBarBattery ||
          (SETTINGS.statusBarClock && halClock.isAvailable());
-}
-
-void drawBookmarkStatusIcon(const GfxRenderer& renderer, const int x, const int y) {
-  constexpr int bytesPerRow = bookmarkStatusIconWidth / 8;
-  for (int row = 0; row < bookmarkStatusIconHeight; ++row) {
-    for (int col = 0; col < bookmarkStatusIconWidth; ++col) {
-      const uint8_t byte = BookmarkStatusIcon[(row + bookmarkStatusIconTopCrop) * bytesPerRow + col / 8];
-      const uint8_t mask = 1U << (7 - (col % 8));
-      renderer.drawPixel(x + col, y + row, (byte & mask) != 0);
-    }
-  }
 }
 
 // This theme's metrics scaled by the board uiScale (lazily built once; uiScale is
@@ -920,8 +910,8 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
   if (showStatusBarTextLane && isPageBookmarked) {
     const int bookmarkGap = leftClusterWidth > 0 ? bookmarkStatusIconGap : 0;
     const int bookmarkX = leftClusterX + leftClusterWidth + bookmarkGap;
-    const int bookmarkY = textY + 5;
-    drawBookmarkStatusIcon(renderer, bookmarkX, bookmarkY);
+    const int bookmarkY = textY + 4;
+    renderer.drawIcon(icon_bookmark_16, bookmarkX, bookmarkY);
     leftClusterWidth += bookmarkStatusIconWidth + bookmarkGap;
   }
 
