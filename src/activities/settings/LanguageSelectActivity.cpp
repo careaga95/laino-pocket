@@ -27,13 +27,33 @@ void LanguageSelectActivity::onEnter() {
 void LanguageSelectActivity::onExit() { Activity::onExit(); }
 
 void LanguageSelectActivity::loop() {
+  auto activateSelected = [this] { handleSelection(); };
+
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
     onBack();
     return;
   }
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    handleSelection();
+    activateSelected();
+    return;
+  }
+
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int contentHeight =
+      renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+  int touched = -1;
+  if (mappedInput.wasListItemTouchedDown(touched, totalItems, selectedIndex, contentTop, contentHeight, false)) {
+    if (selectedIndex != touched) {
+      selectedIndex = touched;
+      requestUpdate();
+    }
+    return;
+  }
+  if (mappedInput.wasListItemTapped(touched, totalItems, selectedIndex, contentTop, contentHeight, false)) {
+    selectedIndex = touched;
+    activateSelected();
     return;
   }
 

@@ -68,6 +68,19 @@ void OpdsServerListActivity::loop() {
       return;
     }
 
+    const int pageItems = std::max(1, contentHeight / std::max(1, metrics.listWithSubtitleRowHeight));
+    const auto swipe = mappedInput.wasSwipe();
+    if (swipe == MappedInputManager::SwipeDir::Up) {
+      selectedIndex = ButtonNavigator::nextPageIndex(selectedIndex, itemCount, pageItems);
+      requestUpdate();
+      return;
+    }
+    if (swipe == MappedInputManager::SwipeDir::Down) {
+      selectedIndex = ButtonNavigator::previousPageIndex(selectedIndex, itemCount, pageItems);
+      requestUpdate();
+      return;
+    }
+
     buttonNavigator.onNext([this, itemCount] {
       selectedIndex = ButtonNavigator::nextIndex(selectedIndex, itemCount);
       requestUpdate();

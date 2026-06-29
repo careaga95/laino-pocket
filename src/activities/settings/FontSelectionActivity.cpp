@@ -71,16 +71,7 @@ void FontSelectionActivity::onEnter() {
 void FontSelectionActivity::onExit() { Activity::onExit(); }
 
 void FontSelectionActivity::loop() {
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    SETTINGS.fontFamily = originalFontFamily_;
-    strncpy(SETTINGS.sdFontFamilyName, originalSdFontFamilyName_, sizeof(SETTINGS.sdFontFamilyName) - 1);
-    SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
-    sdFontSystem.ensureLoaded(renderer);
-    finish();
-    return;
-  }
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+  auto activateSelected = [this] {
     if (selectedIndex_ == previewFontIndex_) {
       handleSelection();
     } else {
@@ -100,12 +91,40 @@ void FontSelectionActivity::loop() {
       }
       requestUpdate();
     }
+  };
+
+  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    SETTINGS.fontFamily = originalFontFamily_;
+    strncpy(SETTINGS.sdFontFamilyName, originalSdFontFamilyName_, sizeof(SETTINGS.sdFontFamilyName) - 1);
+    SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
+    sdFontSystem.ensureLoaded(renderer);
+    finish();
+    return;
+  }
+
+  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+    activateSelected();
     return;
   }
 
   const int listSize = static_cast<int>(fonts_.size());
   const int pageItems =
       UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false, previewHeight + metrics_.verticalSpacing);
+  const int listTop = afterHeader + previewHeight + metrics_.verticalSpacing;
+  const int listHeight = usableHeight - previewHeight - metrics_.verticalSpacing;
+  int touched = -1;
+  if (mappedInput.wasListItemTouchedDown(touched, listSize, selectedIndex_, listTop, listHeight, false)) {
+    if (selectedIndex_ != touched) {
+      selectedIndex_ = touched;
+      requestUpdate();
+    }
+    return;
+  }
+  if (mappedInput.wasListItemTapped(touched, listSize, selectedIndex_, listTop, listHeight, false)) {
+    selectedIndex_ = touched;
+    activateSelected();
+    return;
+  }
 
   buttonNavigator_.onNextRelease([this, listSize] {
     selectedIndex_ = ButtonNavigator::nextIndex(selectedIndex_, listSize);
