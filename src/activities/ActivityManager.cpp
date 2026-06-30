@@ -254,6 +254,10 @@ bool ActivityManager::isReaderActivity() const {
          (currentActivity && currentActivity->isReaderActivity());
 }
 
+bool ActivityManager::currentKeepsBluetoothAlive() const {
+  return currentActivity && currentActivity->keepsBluetoothAlive();
+}
+
 void ActivityManager::requestGhostCleanup() {
   if (currentActivity) currentActivity->requestGhostCleanup();
 }

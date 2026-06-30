@@ -52,6 +52,8 @@ class BluetoothSettingsActivity final : public Activity {
   // Guards the Paired view's hold-to-forget so it fires once per hold and suppresses
   // the tap-to-connect on the same press.
   bool pairedActionTaken = false;
+  bool lastLoggedScanState = false;
+  uint8_t lastLoggedDeviceCount = 0xFF;
 
   void rebuildMenuRows();
   void handleMenuConfirm();

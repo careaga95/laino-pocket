@@ -32,6 +32,11 @@ bool ensureStarted();
 // Drop the active link (e.g. before deep sleep or when the user disables BT).
 void stop();
 
+// Temporarily block the main-loop BLE lifecycle from auto-starting the stack.
+// Used while a render path deliberately frees BLE RAM for a large allocation.
+void setLifecyclePaused(bool paused);
+bool lifecyclePaused();
+
 // Encode a decoded key event into the stable (kind, value) identity used by the
 // settings map. kind: 0 = SpecialKey, 1 = HID usage. Returns false when the event
 // carries no usable identity (no special key and no usage code).

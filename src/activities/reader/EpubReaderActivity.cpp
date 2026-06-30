@@ -871,9 +871,11 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         // Free the BLE stack, build, then restore it. The chapter is cached afterwards, so
         // this recovery runs at most once per uncached chapter; BT reconnects in a few s.
         LOG_INF("ERS", "Section build failed with Bluetooth on; freeing BLE RAM and retrying");
+        bleinput::setLifecyclePaused(true);
         bleinput::stop();
         built = buildSection();
         const bool bleOk = bleinput::ensureStarted();
+        bleinput::setLifecyclePaused(false);
         LOG_INF("ERS", "BLE restart after build: begin=%d", bleOk);
         // Hold the "BT Connecting..." popup until the remote re-links, then force the
         // page render below onto the ghost-cleanup (HALF) path so the popup clears

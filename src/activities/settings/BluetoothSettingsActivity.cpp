@@ -2,6 +2,7 @@
 
 #include <BleKeyboardHost.h>
 #include <GfxRenderer.h>
+#include <Logging.h>
 
 #include <cstdio>
 
@@ -49,10 +50,15 @@ void BluetoothSettingsActivity::rebuildMenuRows() {
 }
 
 void BluetoothSettingsActivity::startScanView() {
+  LOG_INF("BLEUI", "scan view: begin running=%d scanning=%d devices=%u paired=%u", BleHid.isRunning(),
+          BleHid.isScanning(), BleHid.deviceCount(), BleHid.pairedCount());
   view = View::Scan;
   scanIndex = 0;
   awaitingConnect = false;
+  lastLoggedScanState = false;
+  lastLoggedDeviceCount = 0xFF;
   BleHid.startScan(kScanMs);
+  LOG_INF("BLEUI", "scan view: startScan requested scanning=%d devices=%u", BleHid.isScanning(), BleHid.deviceCount());
   requestUpdate();
 }
 
@@ -176,9 +182,18 @@ void BluetoothSettingsActivity::loop() {
     if (view == View::Menu) {
       handleMenuConfirm();
     } else if (view == View::Scan) {
-      if (!awaitingConnect && scanIndex < BleHid.deviceCount()) {
+      const int count = BleHid.deviceCount();
+      if (!awaitingConnect && count == 0 && !BleHid.isScanning()) {
+        LOG_INF("BLEUI", "scan view: restart scan requested");
+        BleHid.startScan(kScanMs);
+        LOG_INF("BLEUI", "scan view: restart scan state scanning=%d devices=%u", BleHid.isScanning(),
+                BleHid.deviceCount());
+        requestUpdate();
+      } else if (!awaitingConnect && scanIndex < count) {
         if (BleHid.isScanning()) BleHid.stopScan();
         const auto& d = BleHid.device(static_cast<uint8_t>(scanIndex));
+        LOG_INF("BLEUI", "scan view: connect addr=%s name='%s' rssi=%d type=%u hid=%d conn=%d", d.addr, d.name,
+                d.rssi, d.addrType, d.hid, d.connectable);
         awaitingConnect = true;
         setBanner(tr(STR_CONNECTING));
         BleHid.connect(d.addr);
@@ -189,7 +204,16 @@ void BluetoothSettingsActivity::loop() {
   }
 
   // The scan list changes as devices are discovered — keep repainting while active.
-  if (view == View::Scan && BleHid.isScanning()) requestUpdate();
+  if (view == View::Scan) {
+    const bool scanning = BleHid.isScanning();
+    const uint8_t deviceCount = BleHid.deviceCount();
+    if (scanning != lastLoggedScanState || deviceCount != lastLoggedDeviceCount) {
+      LOG_INF("BLEUI", "scan view: state scanning=%d devices=%u", scanning, deviceCount);
+      lastLoggedScanState = scanning;
+      lastLoggedDeviceCount = deviceCount;
+    }
+    if (scanning) requestUpdate();
+  }
 }
 
 std::string BluetoothSettingsActivity::deviceLabel(int index) const {
@@ -270,7 +294,8 @@ void BluetoothSettingsActivity::render(RenderLock&&) {
   }
 
   // Button hints differ by view (Menu selects; Scan and Paired both connect).
-  const char* confirm = view == View::Menu ? tr(STR_SELECT) : tr(STR_CONNECT);
+  const bool scanCanRestart = view == View::Scan && BleHid.deviceCount() == 0 && !BleHid.isScanning();
+  const char* confirm = view == View::Menu ? tr(STR_SELECT) : scanCanRestart ? "Scan" : tr(STR_CONNECT);
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirm, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 

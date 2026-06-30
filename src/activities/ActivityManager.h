@@ -101,6 +101,7 @@ class ActivityManager {
 
   bool preventAutoSleep() const;
   bool isReaderActivity() const;
+  bool currentKeepsBluetoothAlive() const;
   // True if BLE should be resident for the current context: any reader (page-turner
   // input) or the Bluetooth settings screen (pairing) is on the stack.
   bool bluetoothShouldBeActive() const;

@@ -496,16 +496,34 @@ void setup() {
 void updateBluetoothLifecycle() {
   const bool wanted =
       SETTINGS.bluetoothEnabled && activityManager.bluetoothShouldBeActive() && WiFi.getMode() == WIFI_MODE_NULL;
+  if (wanted && !BleHid.isRunning() && bleinput::lifecyclePaused()) return;
   if (wanted && !BleHid.isRunning()) {
-    bleinput::ensureStarted();
-    // Single place BLE starts for normal use (reader entry, BT toggled on, etc.), so the
-    // "BT Connecting..." popup shows uniformly. Then clear it with a ghost-cleanup (HALF)
-    // refresh so a grayscale reader page doesn't ghost over the popup.
-    bleinput::showConnectingUntilLinked(renderer, mappedInputManager);
-    activityManager.requestGhostCleanup();
-    activityManager.requestUpdate();
+    LOG_INF("BLELC", "start requested enabled=%u reader=%d settings=%d wifi=%d paired=%u heap=%u maxAlloc=%u",
+            SETTINGS.bluetoothEnabled, activityManager.isReaderActivity(), activityManager.currentKeepsBluetoothAlive(),
+            WiFi.getMode(), BleHid.pairedCount(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    RenderLock renderLock;
+    if (!bleinput::ensureStarted()) {
+      LOG_ERR("BLELC", "start failed heap=%u maxAlloc=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      return;
+    }
+    LOG_INF("BLELC", "started paired=%u heap=%u maxAlloc=%u", BleHid.pairedCount(), ESP.getFreeHeap(),
+            ESP.getMaxAllocHeap());
+    HalPowerManager::Lock powerLock;
+    const bool showReconnectPopup =
+        activityManager.isReaderActivity() && !activityManager.currentKeepsBluetoothAlive() && BleHid.pairedCount() > 0;
+    if (showReconnectPopup) {
+      // Single place BLE starts for reader reconnect. Then clear it with a
+      // ghost-cleanup (HALF) refresh so a grayscale page doesn't ghost over the
+      // popup.
+      bleinput::showConnectingUntilLinked(renderer, mappedInputManager);
+      activityManager.requestGhostCleanup();
+      activityManager.requestUpdate();
+    }
   } else if (!wanted && BleHid.isRunning()) {
+    LOG_INF("BLELC", "stop requested enabled=%u active=%d wifi=%d heap=%u maxAlloc=%u", SETTINGS.bluetoothEnabled,
+            activityManager.bluetoothShouldBeActive(), WiFi.getMode(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     bleinput::stop();
+    LOG_INF("BLELC", "stopped heap=%u maxAlloc=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
 }
 

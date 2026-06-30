@@ -12,6 +12,10 @@
 
 namespace bleinput {
 
+namespace {
+volatile bool g_lifecyclePaused = false;
+}
+
 // NimBLE controller init/deinit hang (interrupt WDT) if run at the 10 MHz low-power
 // frequency, so force normal CPU speed around both. Centralized here so every caller
 // (boot restore, settings toggle, reader toggle, sleep) is covered automatically.
@@ -27,6 +31,10 @@ void stop() {
   HalPowerManager::Lock powerLock;
   BleHid.end();
 }
+
+void setLifecyclePaused(bool paused) { g_lifecyclePaused = paused; }
+
+bool lifecyclePaused() { return g_lifecyclePaused; }
 
 bool encodeKey(const freeink::KeyEvent& ev, uint8_t& kind, uint8_t& value) {
   if (ev.special != freeink::SpecialKey::None) {
