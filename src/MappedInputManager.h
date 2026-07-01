@@ -31,6 +31,7 @@ class MappedInputManager {
   bool wasListItemTouchedDown(int& index, int itemCount, int selectedIndex, int listTop, int listHeight,
                               bool hasSubtitle) const;
   SwipeDir wasSwipe() const;
+  bool wasHomeGesture() const;
   bool wasAnyPressed() const;
   bool wasAnyReleased() const;
   unsigned long getHeldTime() const;

@@ -178,6 +178,19 @@ MappedInputManager::SwipeDir MappedInputManager::wasSwipe() const {
 }
 
 bool MappedInputManager::wasBackGesture() const {
+  float nx = 0.0f;
+  float ny = 0.0f;
+  if (!gpio.wasTouchTap(nx, ny)) return false;
+  int lx = 0;
+  int ly = 0;
+  renderer.tapToLogical(nx, ny, lx, ly);
+  const bool hit =
+      lx <= renderer.getScreenWidth() * BACK_GESTURE_FRAC_X && ly <= renderer.getScreenHeight() * BACK_GESTURE_FRAC_Y;
+  if (hit) rememberTouchHeldTime();
+  return hit;
+}
+
+bool MappedInputManager::wasHomeGesture() const {
   float nxs = 0.0f;
   float nys = 0.0f;
   float nxe = 0.0f;
@@ -196,17 +209,7 @@ bool MappedInputManager::wasBackGesture() const {
       return true;
     }
   }
-
-  float nx = 0.0f;
-  float ny = 0.0f;
-  if (!gpio.wasTouchTap(nx, ny)) return false;
-  int lx = 0;
-  int ly = 0;
-  renderer.tapToLogical(nx, ny, lx, ly);
-  const bool hit =
-      lx <= renderer.getScreenWidth() * BACK_GESTURE_FRAC_X && ly <= renderer.getScreenHeight() * BACK_GESTURE_FRAC_Y;
-  if (hit) rememberTouchHeldTime();
-  return hit;
+  return false;
 }
 
 bool MappedInputManager::wasPressed(const Button button) const {
