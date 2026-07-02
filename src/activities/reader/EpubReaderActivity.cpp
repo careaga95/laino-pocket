@@ -33,6 +33,7 @@
 #include "QrDisplayActivity.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
+#include "SilentRestart.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/BookmarkUtil.h"
@@ -882,6 +883,16 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         // without ghosting the grayscale page.
         bleinput::showConnectingUntilLinked(renderer, mappedInput);
         requestGhostCleanup();
+      }
+      if (!built && !bootWasSilentRestart()) {
+        // Even with BLE freed, the build can fail when this session's parse churn has
+        // fragmented the heap beyond in-place recovery. A silent restart is the only
+        // real defrag on this heap (no compaction); it resumes into this book and
+        // rebuilds the section on a fresh heap. Guarded by bootWasSilentRestart() so a
+        // build that fails again after the restart degrades to the error popup below
+        // instead of reboot-looping.
+        LOG_ERR("ERS", "Section build failed after BLE recovery; silent restart to defrag heap");
+        silentRestartToReader();
       }
       if (!built) {
         LOG_ERR("ERS", "Failed to persist page data to SD");

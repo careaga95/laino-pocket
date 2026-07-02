@@ -128,6 +128,12 @@ enum class BootResume : uint8_t {
   QuickResume,  // wake from a quick-resume deep sleep (SD flag; survives power loss)
 };
 
+// Latched in setup() from the read-and-clear of the RTC flag, so the reboot-loop
+// guard in bootWasSilentRestart() has the answer for the whole session.
+static bool bootWasSilentRestartFlag = false;
+
+bool bootWasSilentRestart() { return bootWasSilentRestartFlag; }
+
 // Latched true once enterDeepSleep() commits to sleeping, before it tears down
 // the current activity. WiFi activities call silentRestart() in onExit() to
 // clear heap fragmentation on the way out, but deep sleep is a full chip reset
@@ -330,6 +336,7 @@ void setup() {
       (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_READER) ? silentRebootTarget : 0;
   silentRebootMagic = 0;
   silentRebootTarget = 0;
+  bootWasSilentRestartFlag = isSilentReboot;
 
   gpio.begin();
   powerManager.begin();
