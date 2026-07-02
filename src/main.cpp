@@ -532,9 +532,15 @@ void updateBluetoothLifecycle() {
     // existing framebuffer (no heap); the next page render clears it via ghost cleanup.
     if (!deferralAnnounced && activityManager.isReaderActivity() && BleHid.pairedCount() > 0) {
       deferralAnnounced = true;
-      RenderLock renderLock;
-      GUI.drawPopup(renderer, tr(STR_BT_PAUSED_LOW_MEM_POPUP));
-      activityManager.requestGhostCleanup();
+      {
+        RenderLock renderLock;
+        GUI.drawPopup(renderer, tr(STR_BT_PAUSED_LOW_MEM_POPUP));
+        activityManager.requestGhostCleanup();
+      }
+      // Toast semantics: request a redraw so the popup clears after the (~2 s) page
+      // re-render instead of lingering until the next page turn. E-ink has no free
+      // timers -- clearing costs one refresh whenever it happens, so do it now.
+      activityManager.requestUpdate();
     }
     return;
   }
