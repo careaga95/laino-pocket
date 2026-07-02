@@ -795,6 +795,15 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     return;
   }
 
+  // The build-recovery path below frees the BLE stack and pauses the main-loop lifecycle
+  // so it can't restart NimBLE while this render is still allocating (glyph prewarm, scan
+  // strings -- an inline restart re-starved exactly that and abort()ed). Unpause only
+  // when the render fully completes, on every exit path; the main-loop lifecycle then
+  // brings BLE back and shows its reconnect popup.
+  struct LifecycleUnpause {
+    ~LifecycleUnpause() { bleinput::setLifecyclePaused(false); }
+  } lifecycleUnpause;
+
   const auto showPendingSyncSaveError = [this]() {
     if (!pendingSyncSaveError) return;
     pendingSyncSaveError = false;
@@ -865,24 +874,33 @@ void EpubReaderActivity::render(RenderLock&& lock) {
                                           SETTINGS.imageRendering, SETTINGS.focusReadingEnabled, popupFn);
       };
 
-      bool built = buildSection();
+      // The layout code (line-break DP arrays, CSS lookups, glyph buffers) allocates freely
+      // and abort()s on OOM under -fno-exceptions, so a starved heap must be handled BEFORE
+      // the build: pre-flight the floor and take the recovery path up front instead of
+      // crashing mid-parse. Field data: builds succeed at ~46 KB free with BLE resident;
+      // abort() observed at ~11 KB free.
+      const bool heapTooLow = ESP.getFreeHeap() < BUILD_MIN_FREE_HEAP;
+      if (heapTooLow) {
+        LOG_ERR("ERS", "Pre-build heap %u below floor %u; entering build recovery", (unsigned)ESP.getFreeHeap(),
+                (unsigned)BUILD_MIN_FREE_HEAP);
+      }
+
+      bool built = !heapTooLow && buildSection();
       if (!built && SETTINGS.bluetoothEnabled) {
         // Building a section needs a large contiguous inflate (deflate) window that the
         // resident NimBLE stack fragments out of existence (~16 KB max block with BT on).
-        // Free the BLE stack, build, then restore it. The chapter is cached afterwards, so
-        // this recovery runs at most once per uncached chapter; BT reconnects in a few s.
-        LOG_INF("ERS", "Section build failed with Bluetooth on; freeing BLE RAM and retrying");
+        // Free the BLE stack and retry. The chapter is cached afterwards, so this recovery
+        // runs at most once per uncached chapter.
+        LOG_INF("ERS", "Section build needs heap; freeing BLE RAM and retrying");
         bleinput::setLifecyclePaused(true);
         bleinput::stop();
         built = buildSection();
-        const bool bleOk = bleinput::ensureStarted();
-        bleinput::setLifecyclePaused(false);
-        LOG_INF("ERS", "BLE restart after build: begin=%d", bleOk);
-        // Hold the "BT Connecting..." popup until the remote re-links, then force the
-        // page render below onto the ghost-cleanup (HALF) path so the popup clears
-        // without ghosting the grayscale page.
-        bleinput::showConnectingUntilLinked(renderer, mappedInput);
-        requestGhostCleanup();
+        // Deliberately do NOT restart BLE inline: this render still has its own allocations
+        // to make (glyph prewarm, scan strings), and an inline NimBLE restart re-starves
+        // it -- field crash: std::string::reserve(2048) abort()ed at ~8 KB free right
+        // after an inline restart. The lifecycle stays paused until this render fully
+        // completes (unpause guard at the top of render()); the main-loop lifecycle then
+        // restarts BLE behind its own heap gate and shows the reconnect popup.
       }
       if (!built && !bootWasSilentRestart()) {
         // Even with BLE freed, the build can fail when this session's parse churn has

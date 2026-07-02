@@ -56,6 +56,14 @@ class EpubReaderActivity final : public Activity {
   SavedPosition savedPositions[MAX_FOOTNOTE_DEPTH] = {};
   int footnoteDepth = 0;
 
+  // Heap floor for entering a section build. The layout code allocates freely (line-break DP
+  // arrays sized by word count, CSS rule lookups, glyph buffers) and under -fno-exceptions an
+  // OOM there abort()s the firmware instead of failing cleanly -- so a starved heap must be
+  // handled *before* the build, not after. Field data: builds succeed at ~46 KB free with BLE
+  // resident; abort() observed at ~11 KB free. CSS styling already degrades below 48 KB
+  // (MIN_FREE_HEAP_FOR_CSS), so 40 KB trades a few early BLE teardowns for not crashing.
+  static constexpr size_t BUILD_MIN_FREE_HEAP = 40 * 1024;
+
   void renderContents(std::unique_ptr<Page> page, int orientedMarginTop, int orientedMarginRight,
                       int orientedMarginBottom, int orientedMarginLeft);
   void renderStatusBar() const;
