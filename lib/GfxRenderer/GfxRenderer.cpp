@@ -282,8 +282,15 @@ static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode 
           const uint8_t bmpVal = 3 - ((byte >> bit_index) & 0x3);
 
           if (renderMode == GfxRenderer::BW && bmpVal < 3) {
-            // Black (also paints over the grays in BW mode)
-            renderer.drawPixel(screenX, screenY, pixelState);
+            // Full coverage is solid ink; partial (anti-aliased edge) coverage
+            // dithers with the same period-2 patterns as fillRectDither
+            // (dark grey = 50% checkerboard, light grey = 25%), so 2-bit fonts
+            // render anti-aliased on BW passes instead of bolding every edge
+            // pixel to black. Skipped pixels leave the background untouched.
+            if (bmpVal == 0 || (bmpVal == 1 && ((screenX + screenY) & 1) == 0) ||
+                (bmpVal == 2 && (screenX & 1) == 0 && (screenY & 1) == 0)) {
+              renderer.drawPixel(screenX, screenY, pixelState);
+            }
           } else if (renderMode == GfxRenderer::GRAYSCALE_MSB && (bmpVal == 1 || bmpVal == 2)) {
             // Light gray (also mark the MSB if it's going to be a dark gray too)
             // Dedicated X3 gray LUTs now provide proper 4-level gray on both devices
