@@ -37,7 +37,6 @@ class ClockOffsetActivity final : public Activity {
   void loadFromSettings();
   void saveToSettings() const;
   void adjustActiveField(int delta);
-  void adjustOffset(int deltaQuarterHours);
   void clampForSign();
   bool fieldFromPoint(int x, int y, Field& field) const;
   void getTouchControlRects(Rect& minusRect, Rect& plusRect) const;

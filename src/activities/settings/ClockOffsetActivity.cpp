@@ -114,13 +114,6 @@ void ClockOffsetActivity::adjustActiveField(int delta) {
   }
 }
 
-void ClockOffsetActivity::adjustOffset(const int deltaQuarterHours) {
-  int biased = static_cast<int>(encodeOffset(sign, hours, minutesQuarter)) + deltaQuarterHours;
-  biased = std::max(0, std::min(104, biased));
-  decodeOffset(static_cast<uint8_t>(biased), sign, hours, minutesQuarter);
-  clampForSign();
-}
-
 bool ClockOffsetActivity::fieldFromPoint(const int x, const int y, Field& field) const {
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
@@ -221,21 +214,22 @@ void ClockOffsetActivity::loop() {
 
     if (mappedInput.wasScreenTapped(tx, ty)) {
       if (contains(minusRect, tx, ty)) {
-        adjustOffset(-1);
+        adjustActiveField(-1);
         requestUpdate();
         return;
       }
       if (contains(plusRect, tx, ty)) {
-        adjustOffset(+1);
+        adjustActiveField(+1);
         requestUpdate();
         return;
       }
 
       Field touchedField = FIELD_HOURS;
       if (fieldFromPoint(tx, ty, touchedField)) {
-        if (activeField == touchedField) {
+        if (touchedField == FIELD_SIGN) {
+          activeField = FIELD_SIGN;
           adjustActiveField(+1);
-        } else {
+        } else if (activeField != touchedField) {
           activeField = touchedField;
         }
         requestUpdate();
