@@ -79,9 +79,9 @@ bool MappedInputManager::mapButton(const Button button, bool (HalGPIO::*fn)(uint
 }
 
 namespace {
-constexpr float BACK_GESTURE_FRAC_X = 0.22f;
-constexpr float BACK_GESTURE_FRAC_Y = 0.12f;
+constexpr float LEFT_EDGE_BACK_GESTURE_FRAC_X = 0.25f;
 constexpr float BOTTOM_EDGE_BACK_GESTURE_FRAC_Y = 0.14f;
+constexpr float TOP_EDGE_MENU_GESTURE_FRAC_Y = 0.14f;
 constexpr unsigned long TOUCH_DOWN_SELECT_DELAY_MS = 90;
 constexpr unsigned long TOUCH_HELD_OVERRIDE_WINDOW_MS = 250;
 }  // namespace
@@ -178,14 +178,41 @@ MappedInputManager::SwipeDir MappedInputManager::wasSwipe() const {
 }
 
 bool MappedInputManager::wasBackGesture() const {
-  float nx = 0.0f;
-  float ny = 0.0f;
-  if (!gpio.wasTouchTap(nx, ny)) return false;
-  int lx = 0;
-  int ly = 0;
-  renderer.tapToLogical(nx, ny, lx, ly);
-  const bool hit =
-      lx <= renderer.getScreenWidth() * BACK_GESTURE_FRAC_X && ly <= renderer.getScreenHeight() * BACK_GESTURE_FRAC_Y;
+  // Back = left-to-right swipe starting near the left edge. Edge-anchored so that
+  // mid-screen horizontal swipes stay available to activities that consume
+  // SwipeDir::Left/Right (e.g. percent selection, image viewer).
+  float nxs = 0.0f;
+  float nys = 0.0f;
+  float nxe = 0.0f;
+  float nye = 0.0f;
+  if (!gpio.wasSwipe(nxs, nys, nxe, nye)) return false;
+  int sx = 0;
+  int sy = 0;
+  int ex = 0;
+  int ey = 0;
+  renderer.tapToLogical(nxs, nys, sx, sy);
+  renderer.tapToLogical(nxe, nye, ex, ey);
+  const bool hit = sx <= renderer.getScreenWidth() * LEFT_EDGE_BACK_GESTURE_FRAC_X && ex > sx &&
+                   std::abs(ex - sx) > std::abs(ey - sy);
+  if (hit) rememberTouchHeldTime();
+  return hit;
+}
+
+bool MappedInputManager::wasMenuGesture() const {
+  // Downward swipe starting at the top edge (mirror of the bottom-edge home gesture).
+  float nxs = 0.0f;
+  float nys = 0.0f;
+  float nxe = 0.0f;
+  float nye = 0.0f;
+  if (!gpio.wasSwipe(nxs, nys, nxe, nye)) return false;
+  int sx = 0;
+  int sy = 0;
+  int ex = 0;
+  int ey = 0;
+  renderer.tapToLogical(nxs, nys, sx, sy);
+  renderer.tapToLogical(nxe, nye, ex, ey);
+  const int topEdgeBottom = static_cast<int>(renderer.getScreenHeight() * TOP_EDGE_MENU_GESTURE_FRAC_Y);
+  const bool hit = sy <= topEdgeBottom && ey > sy && std::abs(ey - sy) > std::abs(ex - sx);
   if (hit) rememberTouchHeldTime();
   return hit;
 }

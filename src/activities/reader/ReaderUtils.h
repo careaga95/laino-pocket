@@ -15,11 +15,9 @@ constexpr unsigned long GO_HOME_MS = 1000;
 constexpr unsigned long SKIP_HOLD_MS = 700;
 constexpr unsigned long BOOKMARK_HOLD_MS = 400;
 constexpr unsigned long BOOKMARK_MESSAGE_DURATION_MS = 2500;
-constexpr unsigned long TOUCH_MENU_HOLD_MS = 400;
 
 enum ReaderTouchAction : freeink::ui::ActionId {
   READER_TOUCH_PREV = 1,
-  READER_TOUCH_MENU = 2,
   READER_TOUCH_NEXT = 3,
 };
 
@@ -71,12 +69,11 @@ inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
 struct TouchPageTurn {
   bool prev;
   bool next;
-  bool center;
   unsigned long heldMs;
 };
 
 inline TouchPageTurn detectTouchPageTurn(GfxRenderer& renderer, const MappedInputManager& input) {
-  TouchPageTurn result{false, false, false, 0};
+  TouchPageTurn result{false, false, 0};
   if (!SETTINGS.touchReaderControls || !input.hasTouch()) {
     return result;
   }
@@ -92,7 +89,6 @@ inline TouchPageTurn detectTouchPageTurn(GfxRenderer& renderer, const MappedInpu
   const int16_t third = width / 3;
   const freeink::ui::TapZone zones[] = {
       {freeink::ui::Rect{0, 0, third, height}, READER_TOUCH_PREV},
-      {freeink::ui::Rect{third, 0, static_cast<int16_t>(width - third * 2), height}, READER_TOUCH_MENU},
       {freeink::ui::Rect{static_cast<int16_t>(third * 2), 0, static_cast<int16_t>(width - third * 2), height},
        READER_TOUCH_NEXT},
   };
@@ -100,7 +96,6 @@ inline TouchPageTurn detectTouchPageTurn(GfxRenderer& renderer, const MappedInpu
   for (const auto& zone : zones) {
     if (!zone.enabled || !zone.rect.contains(static_cast<int16_t>(x), static_cast<int16_t>(y))) continue;
     result.prev = zone.action == READER_TOUCH_PREV;
-    result.center = zone.action == READER_TOUCH_MENU;
     result.next = zone.action == READER_TOUCH_NEXT;
     break;
   }
@@ -108,8 +103,9 @@ inline TouchPageTurn detectTouchPageTurn(GfxRenderer& renderer, const MappedInpu
   return result;
 }
 
-inline bool isTouchMenuGesture(const TouchPageTurn& touch) {
-  return touch.center && touch.heldMs >= TOUCH_MENU_HOLD_MS;
+// Reader menu opens on a downward swipe from the top edge (replaces the old center tap-and-hold).
+inline bool isTouchMenuGesture(const MappedInputManager& input) {
+  return SETTINGS.touchReaderControls && input.hasTouch() && input.wasMenuGesture();
 }
 
 inline void displayWithRefreshCycle(const GfxRenderer& renderer, int& pagesUntilFullRefresh) {

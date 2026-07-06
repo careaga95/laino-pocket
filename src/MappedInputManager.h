@@ -32,6 +32,7 @@ class MappedInputManager {
                               bool hasSubtitle) const;
   SwipeDir wasSwipe() const;
   bool wasHomeGesture() const;
+  bool wasMenuGesture() const;
   bool wasAnyPressed() const;
   bool wasAnyReleased() const;
   unsigned long getHeldTime() const;
