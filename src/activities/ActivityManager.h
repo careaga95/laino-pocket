@@ -106,6 +106,12 @@ class ActivityManager {
   // True if BLE should be resident for the current context: any reader (page-turner
   // input) or the Bluetooth settings screen (pairing) is on the stack.
   bool bluetoothShouldBeActive() const;
+  // True while the CURRENT activity is mid heap-heavy work that must complete before
+  // NimBLE may start (see Activity::deferBluetoothStart). Current only, not the
+  // stack: a reader stacked under a menu has its loop() paused, so its build never
+  // advances — a stack-wide check would hold BLE off for as long as the menu stays
+  // open.
+  bool bluetoothStartDeferred() const;
   bool skipLoopDelay() const;
   ScreenshotInfo getScreenshotInfo() const;
 

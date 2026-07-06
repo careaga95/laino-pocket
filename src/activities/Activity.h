@@ -48,6 +48,12 @@ class Activity {
   // covered by isReaderActivity()). The Bluetooth settings screen overrides this so
   // pairing/scanning works there. Everywhere else BLE is torn down to free heap.
   virtual bool keepsBluetoothAlive() const { return false; }
+  // True while the activity is doing (or has pending) heap-heavy work that must
+  // finish before the BLE stack (~52 KB) may start. The reader overrides this while
+  // a section build has catch-up work inside its window: restarting BLE mid-build
+  // just re-enters the heap state that forced the shed (observed as a 163 ms
+  // shed -> restart -> shed flap in the field).
+  virtual bool deferBluetoothStart() const { return false; }
   // Ask the activity to make its next render a full ghost-cleanup (HALF) refresh rather
   // than a fast/partial one. Used after drawing a transient popup over grayscale content
   // (e.g. the "BT Connecting..." popup over a reader page) so it clears without ghosting.

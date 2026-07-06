@@ -292,8 +292,7 @@ void EpubReaderActivity::loop() {
   // Skip while the render mutex is busy so we never delay a pending render; re-check
   // isBuilding() under the lock since render() may have just finished it.
   if (section && section->isBuilding() && !RenderLock::peek() &&
-      static_cast<int>(section->pageCount) < section->currentPage + BUILD_WINDOW_AHEAD &&
-      buildTickHeapGate()) {
+      static_cast<int>(section->pageCount) < section->currentPage + BUILD_WINDOW_AHEAD && buildTickHeapGate()) {
     RenderLock lock;
     // Re-check under the lock: render() (which also holds the RenderLock) may have finalized the
     // build between the outer isBuilding() check and acquiring the lock here, in which case

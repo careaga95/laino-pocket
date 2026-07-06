@@ -271,6 +271,10 @@ bool ActivityManager::bluetoothShouldBeActive() const {
   return std::any_of(stackActivities.begin(), stackActivities.end(), wants) || wants(currentActivity);
 }
 
+bool ActivityManager::bluetoothStartDeferred() const {
+  return currentActivity && currentActivity->deferBluetoothStart();
+}
+
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }
 
 ScreenshotInfo ActivityManager::getScreenshotInfo() const {

@@ -89,13 +89,16 @@ class EpubReaderActivity final : public Activity {
   // background tick with the BLE stack resident). The tick is deferrable work:
   // page-turn transients free up between turns and the build resumes; the render
   // path still builds the page it actually needs regardless of this floor.
-  static constexpr size_t BACKGROUND_BUILD_MIN_FREE_HEAP = 32 * 1024;
-  // Fragmentation floor for the same gate: a tick passed the free-heap floor at
-  // 34.7 KB free but the largest block was ~11 KB, and a parse allocation inside the
-  // tick aborted anyway. Free heap says how much memory exists; maxAlloc says whether
-  // any single allocation can actually have it. 16 KB also keeps the advance-table
-  // batch path (16 KB scratch) viable during builds.
-  static constexpr size_t BACKGROUND_BUILD_MIN_MAX_ALLOC = 16 * 1024;
+  // Calibrated BETWEEN the measured states: steady reading with BLE resident runs at
+  // ~29.4 KB free / ~16.4 KB largest block (ticks are safe there — a 2-page parse
+  // transient is a few KB), while the field crash happened at 34.7 KB free with an
+  // ~11 KB largest block. A first cut at 32 KB/16 KB sat just ABOVE the healthy
+  // steady state, guaranteeing a pointless BLE shed the moment any build work was
+  // pending (the maxAlloc floor fired on a 12-byte shortfall).
+  static constexpr size_t BACKGROUND_BUILD_MIN_FREE_HEAP = 26 * 1024;
+  // Fragmentation floor for the same gate: free heap says how much memory exists;
+  // maxAlloc says whether any single allocation can actually have it.
+  static constexpr size_t BACKGROUND_BUILD_MIN_MAX_ALLOC = 13 * 1024;
   // Gate for a background build tick: true when the heap can take parse allocations.
   // When BLE is what's squeezing the heap, sheds it (build-pending deferral in the
   // lifecycle then holds restarts off until the window is caught up) instead of
@@ -149,6 +152,15 @@ class EpubReaderActivity final : public Activity {
   void loop() override;
   void render(RenderLock&& lock) override;
   bool isReaderActivity() const override { return true; }
+  // Hold BLE off only while the background build has catch-up work pending inside
+  // its window (same condition loop() uses to tick it). Gating on isBuilding() alone
+  // would hold BLE off for the rest of the chapter — a windowed build stays
+  // "building" until the reader walks the whole spine. Unlocked read, same pattern
+  // as the background-build check in loop().
+  bool deferBluetoothStart() const override {
+    return section && section->isBuilding() &&
+           static_cast<int>(section->pageCount) < section->currentPage + BUILD_WINDOW_AHEAD;
+  }
   void requestGhostCleanup() override { pagesUntilFullRefresh = 1; }
   ScreenshotInfo getScreenshotInfo() const override;
   CrossPointPosition getCurrentPosition() const;

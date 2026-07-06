@@ -511,6 +511,18 @@ void updateBluetoothLifecycle() {
   static uint32_t recoveryTeardownMs = 0;
   if (bleinput::lifecyclePaused()) recoveryTeardownMs = millis();
   if (wanted && !BleHid.isRunning() && bleinput::lifecyclePaused()) return;
+  // Never start while the reader has build catch-up work pending: restarting into a
+  // pending build just re-enters the heap state that forced the shed (field: a
+  // 163 ms shed -> restart -> shed flap at a chapter watermark). Builds tick fast;
+  // the deferral clears itself within seconds and no popup is warranted.
+  if (wanted && !BleHid.isRunning() && activityManager.bluetoothStartDeferred()) {
+    static uint32_t lastBuildDeferLogMs = 0;
+    if (millis() - lastBuildDeferLogMs > 10000) {
+      lastBuildDeferLogMs = millis();
+      LOG_INF("BLELC", "start deferred: section build in progress heap=%u", ESP.getFreeHeap());
+    }
+    return;
+  }
   static constexpr uint32_t BLE_RESTART_COOLDOWN_MS = 30 * 1000;
   const bool inCooldown = recoveryTeardownMs != 0 && millis() - recoveryTeardownMs < BLE_RESTART_COOLDOWN_MS;
   // Heap gate: NimBLE needs ~57 KB, and the section-build pre-flight needs 40 KB free
@@ -560,7 +572,7 @@ void updateBluetoothLifecycle() {
     // observed in the field as the gate passing at 116 KB free and begin() then
     // landing on 44 KB, where the session ground down and aborted. Defer to the next
     // tick; the gate re-evaluates against the settled heap.
-    if (ESP.getFreeHeap() < startFloor || bleinput::lifecyclePaused()) {
+    if (ESP.getFreeHeap() < startFloor || activityManager.bluetoothStartDeferred() || bleinput::lifecyclePaused()) {
       LOG_INF("BLELC", "start aborted under render lock: heap %u floor %u", ESP.getFreeHeap(), (unsigned)startFloor);
       return;
     }
