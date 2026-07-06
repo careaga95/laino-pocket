@@ -46,6 +46,9 @@ void BleButtonMapActivity::onExit() {
 
 bool BleButtonMapActivity::assignCapturedKey(MappedInputManager::Button button) {
   const uint8_t btn = static_cast<uint8_t>(button);
+  // Mutated via std::replace_if below and through `slot`; cppcheck's CI parse
+  // (no include paths) can't see the writes and suggests const.
+  // cppcheck-suppress constVariableReference
   auto& map = SETTINGS.bleKeyMap;
   using Entry = CrossPointSettings::BleKeyMapEntry;
   const uint8_t kind = capturedKind;
