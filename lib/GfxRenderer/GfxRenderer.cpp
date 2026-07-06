@@ -289,8 +289,7 @@ static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode 
             // same period-2 patterns as fillRectDither (dark grey = 50%
             // checkerboard, light grey = 25%), approximating AA in a single
             // BW pass. Skipped pixels leave the background untouched.
-            if (!renderer.isFastAntiAliasing() || bmpVal == 0 ||
-                (bmpVal == 1 && ((screenX + screenY) & 1) == 0) ||
+            if (!renderer.isFastAntiAliasing() || bmpVal == 0 || (bmpVal == 1 && ((screenX + screenY) & 1) == 0) ||
                 (bmpVal == 2 && (screenX & 1) == 0 && (screenY & 1) == 0)) {
               renderer.drawPixel(screenX, screenY, pixelState);
             }
