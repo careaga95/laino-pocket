@@ -33,6 +33,7 @@
 #include "QrDisplayActivity.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
+#include "SilentRestart.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/BookmarkUtil.h"
@@ -888,6 +889,15 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     return;
   }
 
+  // The build-recovery path below frees the BLE stack and pauses the main-loop lifecycle
+  // so it can't restart NimBLE while this render is still allocating (glyph prewarm, scan
+  // strings -- an inline restart re-starved exactly that and abort()ed). Unpause only
+  // when the render fully completes, on every exit path; the main-loop lifecycle then
+  // brings BLE back and shows its reconnect popup.
+  struct LifecycleUnpause {
+    ~LifecycleUnpause() { bleinput::setLifecyclePaused(false); }
+  } lifecycleUnpause;
+
   const auto showPendingSyncSaveError = [this]() {
     if (!pendingSyncSaveError) return;
     pendingSyncSaveError = false;
@@ -967,25 +977,45 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         LOG_DBG("ERS", "Cache not found, building...");
       }
 
+      // The layout code (line-break DP arrays, CSS lookups, glyph buffers) allocates freely
+      // and abort()s on OOM under -fno-exceptions, so a starved heap must be handled BEFORE
+      // the build: pre-flight the floor and take the recovery path up front instead of
+      // crashing mid-parse. Field data: builds succeed at ~46 KB free with BLE resident;
+      // abort() observed at ~11 KB free.
+      const bool heapTooLow = ESP.getFreeHeap() < BUILD_MIN_FREE_HEAP;
+      if (heapTooLow) {
+        LOG_ERR("ERS", "Pre-build heap %u below floor %u; entering build recovery", (unsigned)ESP.getFreeHeap(),
+                (unsigned)BUILD_MIN_FREE_HEAP);
+      }
+
       // Building a section needs a large contiguous inflate (deflate) window that the
       // resident NimBLE stack fragments out of existence (~16 KB max block with BT on).
-      // On build failure with BT enabled: free the BLE stack, retry the build, then
-      // restore it. The inflated HTML is cached after a successful build, so this
-      // recovery runs at most once per uncached chapter; BT reconnects in a few s.
+      // On build failure (or a pre-flight floor miss) with BT enabled: free the BLE stack
+      // and retry. The chapter is cached afterwards, so this recovery runs at most once
+      // per uncached chapter.
+      // Deliberately do NOT restart BLE inline: this render still has its own allocations
+      // to make (glyph prewarm, scan strings), and an inline NimBLE restart re-starves
+      // it -- field crash: std::string::reserve(2048) abort()ed at ~8 KB free right
+      // after an inline restart. The lifecycle stays paused until this render fully
+      // completes (unpause guard at the top of render()); the main-loop lifecycle then
+      // restarts BLE behind its own heap gate and shows the reconnect popup.
       const auto retryWithBleFreed = [&](auto&& buildFn) {
-        LOG_INF("ERS", "Section build failed with Bluetooth on; freeing BLE RAM and retrying");
+        LOG_INF("ERS", "Section build needs heap; freeing BLE RAM and retrying");
         bleinput::setLifecyclePaused(true);
         bleinput::stop();
-        const bool built = buildFn();
-        const bool bleOk = bleinput::ensureStarted();
-        bleinput::setLifecyclePaused(false);
-        LOG_INF("ERS", "BLE restart after build: begin=%d", bleOk);
-        // Hold the "BT Connecting..." popup until the remote re-links, then force the
-        // page render below onto the ghost-cleanup (HALF) path so the popup clears
-        // without ghosting the grayscale page.
-        bleinput::showConnectingUntilLinked(renderer, mappedInput);
-        requestGhostCleanup();
-        return built;
+        return buildFn();
+      };
+
+      // Even with BLE freed, the build can fail when this session's parse churn has
+      // fragmented the heap beyond in-place recovery. A silent restart is the only
+      // real defrag on this heap (no compaction); it resumes into this book and
+      // rebuilds the section on a fresh heap. Guarded by bootWasSilentRestart() so a
+      // build that fails again after the restart degrades to the error popup below
+      // instead of reboot-looping.
+      const auto silentRestartDefrag = [&]() {
+        if (bootWasSilentRestart()) return;
+        LOG_ERR("ERS", "Section build failed after BLE recovery; silent restart to defrag heap");
+        silentRestartToReader();
       };
 
       // Jumps that need the final pagination or the anchor map -- explicit page jumps,
@@ -1013,11 +1043,12 @@ void EpubReaderActivity::render(RenderLock&& lock) {
                                             viewportHeight, SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle,
                                             SETTINGS.imageRendering, SETTINGS.focusReadingEnabled, popupFn);
         };
-        bool built = buildSection();
+        bool built = !heapTooLow && buildSection();
         if (!built && SETTINGS.bluetoothEnabled) {
           built = retryWithBleFreed(buildSection);
         }
         if (!built) {
+          silentRestartDefrag();
           LOG_ERR("ERS", "Failed to persist page data to SD");
           section.reset();
           showPendingSyncSaveError();
@@ -1065,11 +1096,12 @@ void EpubReaderActivity::render(RenderLock&& lock) {
                                      viewportHeight, SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle,
                                      SETTINGS.imageRendering, SETTINGS.focusReadingEnabled);
         };
-        bool started = beginBuild();
+        bool started = !heapTooLow && beginBuild();
         if (!started && SETTINGS.bluetoothEnabled) {
           started = retryWithBleFreed(beginBuild);
         }
         if (!started) {
+          silentRestartDefrag();
           LOG_ERR("ERS", "Failed to start section build");
           section.reset();
           showPendingSyncSaveError();
