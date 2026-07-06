@@ -244,7 +244,13 @@ bool KeyboardEntryActivity::keyFromPoint(const int x, const int y, int& row, int
   }
 
   const int bottomRowY = keyboardStartY + contentRows * (keyHeight + keySpacing) + bottomRowGap;
-  if (y >= bottomRowY && y < bottomRowY + bottomKeyHeight) {
+  // Fingers land low on the last row (occlusion), and unlike the content rows there is
+  // no key below to catch the miss — taps fell into the dead band between the bottom
+  // keys and the button hints. Extend the hit zone down to the hints bar.
+  const int bottomRowHitEnd = metrics.keyboardBottomAligned
+                                  ? std::max(bottomRowY + bottomKeyHeight, pageHeight - metrics.buttonHintsHeight)
+                                  : bottomRowY + bottomKeyHeight;
+  if (y >= bottomRowY && y < bottomRowHitEnd) {
     for (int c = 0; c < BOTTOM_KEY_COUNT; c++) {
       const int keyX = bottomLeftMargin + c * (bottomKeyWidth + bkSpacing);
       if (x >= keyX && x < keyX + bottomKeyWidth) {
