@@ -192,8 +192,8 @@ void BluetoothSettingsActivity::loop() {
       } else if (!awaitingConnect && scanIndex < count) {
         if (BleHid.isScanning()) BleHid.stopScan();
         const auto& d = BleHid.device(static_cast<uint8_t>(scanIndex));
-        LOG_INF("BLEUI", "scan view: connect addr=%s name='%s' rssi=%d type=%u hid=%d conn=%d", d.addr, d.name,
-                d.rssi, d.addrType, d.hid, d.connectable);
+        LOG_INF("BLEUI", "scan view: connect addr=%s name='%s' rssi=%d type=%u hid=%d conn=%d", d.addr, d.name, d.rssi,
+                d.addrType, d.hid, d.connectable);
         awaitingConnect = true;
         setBanner(tr(STR_CONNECTING));
         BleHid.connect(d.addr);
