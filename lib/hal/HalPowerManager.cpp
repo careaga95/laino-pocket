@@ -83,6 +83,15 @@ void HalPowerManager::startDeepSleep(HalGPIO& gpio) const {
   }
 #endif
 
+  // Cut the gated peripheral rails (touch/SD/EPD on boards like the Sticky) and
+  // hold the enables off through deep sleep — otherwise the GT911 and SD card
+  // stay powered all through "off" and drain the battery. No-op on boards with
+  // no switched rails (X4/X3). Trade-off: no touch-to-wake; wake is the power
+  // button. Must run after display.deepSleep() so the panel controller gets its
+  // deep-sleep command while its rail is still up (enterDeepSleep() in main.cpp
+  // guarantees that ordering).
+  freeink::PowerManager::powerDownRailsForSleep();
+
   freeink::PowerManager::armPowerButtonWakeup();
   freeink::PowerManager::deepSleep();
 }
