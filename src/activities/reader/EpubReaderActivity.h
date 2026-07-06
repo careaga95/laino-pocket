@@ -90,6 +90,17 @@ class EpubReaderActivity final : public Activity {
   // page-turn transients free up between turns and the build resumes; the render
   // path still builds the page it actually needs regardless of this floor.
   static constexpr size_t BACKGROUND_BUILD_MIN_FREE_HEAP = 32 * 1024;
+  // Fragmentation floor for the same gate: a tick passed the free-heap floor at
+  // 34.7 KB free but the largest block was ~11 KB, and a parse allocation inside the
+  // tick aborted anyway. Free heap says how much memory exists; maxAlloc says whether
+  // any single allocation can actually have it. 16 KB also keeps the advance-table
+  // batch path (16 KB scratch) viable during builds.
+  static constexpr size_t BACKGROUND_BUILD_MIN_MAX_ALLOC = 16 * 1024;
+  // Gate for a background build tick: true when the heap can take parse allocations.
+  // When BLE is what's squeezing the heap, sheds it (build-pending deferral in the
+  // lifecycle then holds restarts off until the window is caught up) instead of
+  // stalling the build forever below the floors.
+  bool buildTickHeapGate();
   // How many pages to keep laid out ahead of the reader for a still-building section. A page
   // turn is ~1s on e-ink and a page builds in ~30ms, so the reader can't out-click the builder
   // -- a tiny buffer is enough. The background build stops once the watermark is this far

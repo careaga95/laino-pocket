@@ -257,6 +257,27 @@ void EpubReaderActivity::openReaderMenu() {
                          });
 }
 
+bool EpubReaderActivity::buildTickHeapGate() {
+  const size_t freeHeap = ESP.getFreeHeap();
+  const size_t maxBlock = ESP.getMaxAllocHeap();
+  if (freeHeap >= BACKGROUND_BUILD_MIN_FREE_HEAP && maxBlock >= BACKGROUND_BUILD_MIN_MAX_ALLOC) {
+    return true;
+  }
+  // Below the floors. If the BLE stack is what's squeezing the heap, shed it — the
+  // established policy on this branch is that builds and resident BLE don't coexist,
+  // and this was the one build path without that protection (field crash: a tick's
+  // parse allocation aborted at maxAlloc ~11 KB with BLE resident). The lifecycle's
+  // build-pending deferral keeps BLE down until the window is caught up, then
+  // restarts it behind the start floor. Without BLE resident, just wait: page-turn
+  // transients free up between turns and the tick retries every loop pass.
+  if (BleHid.isRunning()) {
+    LOG_INF("ERS", "Background build needs heap (free=%u maxAlloc=%u); freeing BLE RAM", (unsigned)freeHeap,
+            (unsigned)maxBlock);
+    bleinput::stop();
+  }
+  return false;
+}
+
 void EpubReaderActivity::loop() {
   if (!epub) {
     // Should never happen
@@ -269,12 +290,10 @@ void EpubReaderActivity::loop() {
   // RenderLock and locked out page turns. The build follows the reader instead, and instant
   // reopen comes from suspendBuild() persisting the laid-out pages as a partial on exit.
   // Skip while the render mutex is busy so we never delay a pending render; re-check
-  // isBuilding() under the lock since render() may have just finished it. Also skip
-  // while free heap is below the floor — the tick is deferrable, and parsing into a
-  // starved heap abort()s (see BACKGROUND_BUILD_MIN_FREE_HEAP).
+  // isBuilding() under the lock since render() may have just finished it.
   if (section && section->isBuilding() && !RenderLock::peek() &&
       static_cast<int>(section->pageCount) < section->currentPage + BUILD_WINDOW_AHEAD &&
-      ESP.getFreeHeap() >= BACKGROUND_BUILD_MIN_FREE_HEAP) {
+      buildTickHeapGate()) {
     RenderLock lock;
     // Re-check under the lock: render() (which also holds the RenderLock) may have finalized the
     // build between the outer isBuilding() check and acquiring the lock here, in which case
@@ -1273,6 +1292,10 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     const auto start = millis();
     renderContents(std::move(p), orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft);
     LOG_DBG("ERS", "Rendered page in %dms", millis() - start);
+    // Fragmentation tracker: free vs largest block after every page. A falling
+    // maxAlloc/free ratio across pages points at whichever allocation pattern the
+    // preceding lines show (mini rebuilds, kern reloads, BLE churn).
+    LOG_DBG("MEM", "post-render: free=%u maxAlloc=%u", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
   }
   saveProgress(currentSpineIndex, section->currentPage, section->estimatedTotalPages());
 
