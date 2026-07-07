@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <BoardConfig.h>
 #include <Epub.h>
 #include <FontCacheManager.h>
 #include <FontDecompressor.h>
@@ -304,19 +305,7 @@ void setupDisplayAndFonts(bool seamless = false) {
 }
 
 void setup() {
-#if defined(FREEINK_DEVICE_STICKY) && FREEINK_DEVICE_STICKY
-  // Sticky power latch (74AHC1G79 D flip-flop): the power button clocks the
-  // latch on and it then holds itself — the board does NOT die when USB is
-  // unplugged. Per the Seeed hardware spec, firmware asserts PWR_HOLD (GPIO45)
-  // and PWR_LOCK (GPIO46) after startup and releases them to perform a software
-  // power-off; Seeed's peripheral demo drives both HIGH as its first init step,
-  // so match that here to keep a future shutdown path deterministic. Both are
-  // S3 strapping pins; driving them is safe post-boot, do not touch earlier.
-  pinMode(45, OUTPUT);
-  digitalWrite(45, HIGH);
-  pinMode(46, OUTPUT);
-  digitalWrite(46, HIGH);
-#endif
+  BoardConfig::holdPowerRails();
 
   t1 = millis();
 
