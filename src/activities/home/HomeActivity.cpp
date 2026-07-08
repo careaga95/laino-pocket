@@ -1,7 +1,6 @@
 #include "HomeActivity.h"
 
 #include <Bitmap.h>
-#include <Epub.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -19,6 +18,7 @@
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/BookCoverUtils.h"
 
 int HomeActivity::getMenuItemCount() const {
   int count = 4;  // File Browser, Recents, File transfer, Settings
@@ -61,19 +61,14 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
     if (!book.coverBmpPath.empty()) {
       std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
       if (!Storage.exists(coverPath.c_str())) {
-        // If epub, try to load the metadata for title/author and cover
+        // If epub, generate the Continue Reading thumbnail from its cover
         if (FsHelpers::hasEpubExtension(book.path)) {
-          Epub epub(book.path, "/.crosspoint");
-          // Skip loading css since we only need metadata here
-          epub.load(false, true);
-
-          // Try to generate thumbnail image for Continue Reading card
           if (!showingLoading) {
             showingLoading = true;
             popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
           }
           GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
-          bool success = epub.generateThumbBmp(coverHeight);
+          bool success = BookCoverUtils::generateThumbBmp(book.path, coverHeight);
           if (!success) {
             RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
             book.coverBmpPath = "";

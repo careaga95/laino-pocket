@@ -1,10 +1,12 @@
 #include "BookCacheUtils.h"
 
-#include <Epub.h>
 #include <FsHelpers.h>
+#include <HalStorage.h>
 #include <Logging.h>
 #include <Txt.h>
 #include <Xtc.h>
+
+#include "activities/reader/EpubReaderUtils.h"
 
 bool isBookCacheDirectoryName(const char* name) {
   if (!name) {
@@ -22,7 +24,10 @@ bool isBookCacheDirectoryName(const char* name) {
 
 void clearBookCache(const std::string& path) {
   if (FsHelpers::hasEpubExtension(path)) {
-    Epub(path, "/.crosspoint").clearCache();
+    const std::string cacheDir = EpubReaderUtils::cacheDirForBook(path);
+    if (Storage.exists(cacheDir.c_str())) {
+      Storage.removeDir(cacheDir.c_str());
+    }
   } else if (FsHelpers::hasXtcExtension(path)) {
     Xtc(path, "/.crosspoint").clearCache();
   } else if (FsHelpers::hasTxtExtension(path)) {

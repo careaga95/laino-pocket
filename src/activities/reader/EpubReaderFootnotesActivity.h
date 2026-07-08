@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Epub/FootnoteEntry.h>
+#include "FootnoteEntry.h"
 
 #include <cstring>
 #include <functional>

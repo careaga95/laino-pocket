@@ -1,6 +1,5 @@
 #include "SleepActivity.h"
 
-#include <Epub.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -15,6 +14,7 @@
 #include "fontIds.h"
 #include "images/Logo120.h"
 #include "images/MoonIcon.h"
+#include "util/BookCoverUtils.h"
 
 void SleepActivity::onEnter() {
   Activity::onEnter();
@@ -293,19 +293,12 @@ void SleepActivity::renderCoverSleepScreen() const {
     coverBmpPath = lastTxt.getCoverBmpPath();
   } else if (FsHelpers::hasEpubExtension(APP_STATE.openEpubPath)) {
     // Handle EPUB file
-    Epub lastEpub(APP_STATE.openEpubPath, "/.crosspoint");
-    // Skip loading css since we only need metadata here
-    if (!lastEpub.load(true, true)) {
-      LOG_ERR("SLP", "Failed to load last epub");
-      return (this->*renderNoCoverSleepScreen)();
-    }
-
-    if (!lastEpub.generateCoverBmp(cropped)) {
+    if (!BookCoverUtils::generateCoverBmp(APP_STATE.openEpubPath, cropped)) {
       LOG_ERR("SLP", "Failed to generate cover bmp");
       return (this->*renderNoCoverSleepScreen)();
     }
 
-    coverBmpPath = lastEpub.getCoverBmpPath(cropped);
+    coverBmpPath = BookCoverUtils::coverBmpPath(APP_STATE.openEpubPath, cropped);
   } else {
     return (this->*renderNoCoverSleepScreen)();
   }

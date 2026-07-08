@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include <Epub.h>
 #include <FontCacheManager.h>
 #include <FontDecompressor.h>
 #include <GfxRenderer.h>

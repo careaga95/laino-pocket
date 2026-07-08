@@ -13,7 +13,7 @@
 // including per-band strip re-renders — streams that file instead of
 // re-decoding the PNG/JPEG.
 
-#include <Epub/FootnoteEntry.h>
+#include "FootnoteEntry.h"
 #include <layout/ChapterLayout.h>
 
 #include <string>
