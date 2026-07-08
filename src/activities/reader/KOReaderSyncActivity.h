@@ -1,12 +1,11 @@
 #pragma once
-#include <Epub.h>
+#include <KOReaderPosition.h>
 
-#include <functional>
-#include <memory>
 #include <optional>
+#include <string>
 
+#include "BookPaginator.h"
 #include "KOReaderSyncClient.h"
-#include "ProgressMapper.h"
 #include "activities/Activity.h"
 
 /**
@@ -18,6 +17,11 @@
  * 3. Fetch remote progress
  * 4. Show comparison and options (Apply/Upload)
  * 5. Apply or upload progress
+ *
+ * Positions are FreeInkBook locators: remote xpaths resolve to a chapter
+ * character offset (BookXPath) when their element ancestry matches, else to
+ * a chapter fraction from the synced percentage. Either lands exactly via
+ * pageForChar() when the reader reopens.
  */
 class KOReaderSyncActivity final : public Activity {
  public:
@@ -33,7 +37,6 @@ class KOReaderSyncActivity final : public Activity {
         currentParagraphIndex(currentParagraphIndex),
         localChapterName(std::move(localChapterName)),
         remoteProgress{},
-        remotePosition{},
         localProgress(std::move(localKoPos)) {}
 
   void onEnter() override;
@@ -55,7 +58,15 @@ class KOReaderSyncActivity final : public Activity {
     NO_CREDENTIALS
   };
 
-  std::shared_ptr<Epub> epub;  // null until lazy-loaded after TLS in performSync()
+  // Remote position resolved into the new-engine locator model.
+  struct RemotePosition {
+    int spineIndex = 0;
+    uint32_t charStart = 0;
+    bool hasCharStart = false;  // xpath ancestry matched exactly
+    float chapterFraction = 0;  // percentage-derived fallback landing
+  };
+
+  BookPaginator paginator;  // closed until lazy-loaded after TLS in performSync()
   std::string epubPath;
   std::string localChapterName;
   int currentSpineIndex;
@@ -70,9 +81,9 @@ class KOReaderSyncActivity final : public Activity {
   // Remote progress data
   bool hasRemoteProgress = false;
   KOReaderProgress remoteProgress;
-  CrossPointPosition remotePosition;
+  RemotePosition remotePosition;
 
-  // Local progress as KOReader format (pre-computed before Epub was released)
+  // Local progress as KOReader format (pre-computed before the book was released)
   SavedProgressPosition localProgress;
 
   // Selection in result screen (0=Apply, 1=Upload)
@@ -87,7 +98,8 @@ class KOReaderSyncActivity final : public Activity {
   void onWifiSelectionComplete(bool success);
   void performSync();
   void performUpload();
-  void ensureEpubLoaded();
-  void saveProgressAndReturn(int spineIndex, int page);
+  bool ensureBookLoaded();
+  void resolveRemotePosition();
+  void saveProgressAndReturn();
   void returnToReader();
 };

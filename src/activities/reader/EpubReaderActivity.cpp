@@ -1,5 +1,6 @@
 #include "EpubReaderActivity.h"
 
+#include <BookXPath.h>
 #include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
@@ -55,9 +56,7 @@ bool isInReadFolder(const std::string& path) {
   return path.size() > n && path.compare(0, n, READ_FOLDER) == 0 && path[n] == '/';
 }
 
-std::string cacheDirForBook(const std::string& path) {
-  return "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(path));
-}
+using EpubReaderUtils::cacheDirForBook;
 
 // Display fallback when the OPF carries no title: the bare filename.
 std::string filenameTitle(const std::string& path) {
@@ -550,9 +549,19 @@ bool EpubReaderActivity::launchKOReaderSync() {
   const int totalPages = paginator.chapterReady() ? static_cast<int>(paginator.pageCount()) : 0;
 
   // Pre-compute the local KOReader position and chapter name while the book
-  // is still open. The synthetic xpath carries the chapter; the whole-book
-  // percentage is the primary sync mechanism.
-  SavedProgressPosition localKoPos{syntheticXPath(currentSpineIndex), currentBookFraction()};
+  // is still open. A streaming scan turns the current page's character offset
+  // into a real-ancestry xpath so KOReader devices land on the paragraph;
+  // the whole-book percentage is the robust fallback.
+  std::string localXPath = syntheticXPath(currentSpineIndex);
+  if (!paginator.isTxt()) {
+    const freeink::book::ManifestItem* item = paginator.book().spineItem(currentSpineIndex);
+    const freeink::book::ZipEntry* entry = item != nullptr ? paginator.book().zip().find(item->href) : nullptr;
+    if (entry != nullptr) {
+      localXPath = BookXPath::xpathForCharStart(*paginator.bookSource(), paginator.book().zip(), *entry,
+                                                currentSpineIndex, lastCharStart);
+    }
+  }
+  SavedProgressPosition localKoPos{std::move(localXPath), currentBookFraction()};
   const int tocIdx = paginator.tocIndexForSpine(currentSpineIndex);
   std::string localChapterName = tocIdx >= 0 ? paginator.tocItem(tocIdx).title : "";
 

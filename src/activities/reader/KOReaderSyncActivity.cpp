@@ -1,5 +1,6 @@
 #include "KOReaderSyncActivity.h"
 
+#include <BookXPath.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
@@ -9,9 +10,7 @@
 #include <esp_wifi.h>
 
 #include <algorithm>
-#include <cassert>
 
-#include "Epub/Section.h"
 #include "EpubReaderUtils.h"
 #include "KOReaderCredentialStore.h"
 #include "KOReaderDocumentId.h"
@@ -51,36 +50,66 @@ void syncTimeWithNTP() {
 }
 }  // namespace
 
-void KOReaderSyncActivity::ensureEpubLoaded() {
-  if (!epub) {
-    LOG_DBG("KOSync", "Loading epub for progress mapping (heap: %u)", (unsigned)ESP.getFreeHeap());
-    epub = std::make_shared<Epub>(epubPath, "/.crosspoint");
-    epub->setupCacheDir();
-    // Load metadata only (no CSS needed for progress mapping, don't rebuild if cache is missing).
-    if (!epub->load(false, true)) {
-      LOG_ERR("KOSync", "Failed to load epub for progress mapping");
-      epub.reset();
-      return;
-    }
-    LOG_DBG("KOSync", "Epub loaded (heap: %u)", (unsigned)ESP.getFreeHeap());
+bool KOReaderSyncActivity::ensureBookLoaded() {
+  if (paginator.isOpen()) return true;
+  LOG_DBG("KOSync", "Loading book for progress mapping (heap: %u)", (unsigned)ESP.getFreeHeap());
+  if (!paginator.open(epubPath, EpubReaderUtils::cacheDirForBook(epubPath), renderer)) {
+    LOG_ERR("KOSync", "Failed to open book for progress mapping");
+    return false;
+  }
+  LOG_DBG("KOSync", "Book loaded (heap: %u)", (unsigned)ESP.getFreeHeap());
+  return true;
+}
+
+// Resolve the fetched remote (xpath, percentage) into the new-engine locator:
+// spine from the xpath's DocFragment, character offset by matching the
+// xpath's element ancestry in a streaming scan of that chapter. Any failure
+// falls back to the percentage (mapped through spine byte weights).
+void KOReaderSyncActivity::resolveRemotePosition() {
+  remotePosition = RemotePosition{};
+
+  int spine = BookXPath::spineIndexForXpath(remoteProgress.progress);
+  float chapterFraction = 0.0f;
+  if (spine < 0 || spine >= static_cast<int>(paginator.spineCount())) {
+    spine = paginator.spineForBookFraction(remoteProgress.percentage, &chapterFraction);
+    remotePosition.spineIndex = spine;
+    remotePosition.chapterFraction = chapterFraction;
+    return;
+  }
+  remotePosition.spineIndex = spine;
+
+  // Percentage-derived landing within the chapter as the fallback.
+  const float chapterStart = paginator.bookProgress(spine, 0.0f);
+  const float chapterEnd = paginator.bookProgress(spine, 1.0f);
+  remotePosition.chapterFraction =
+      chapterEnd > chapterStart
+          ? std::clamp((remoteProgress.percentage - chapterStart) / (chapterEnd - chapterStart), 0.0f, 1.0f)
+          : 0.0f;
+
+  const freeink::book::ManifestItem* item = paginator.book().spineItem(spine);
+  const freeink::book::ZipEntry* entry = item != nullptr ? paginator.book().zip().find(item->href) : nullptr;
+  if (entry == nullptr) return;
+  uint32_t charStart = 0;
+  if (BookXPath::charStartForXpath(*paginator.bookSource(), paginator.book().zip(), *entry, remoteProgress.progress,
+                                   &charStart)) {
+    remotePosition.charStart = charStart;
+    remotePosition.hasCharStart = true;
+    LOG_DBG("KOSync", "Remote xpath resolved: spine %d char %u", spine, static_cast<unsigned>(charStart));
+  } else {
+    LOG_DBG("KOSync", "Remote xpath ancestry not matched; using percentage fallback");
   }
 }
 
-void KOReaderSyncActivity::saveProgressAndReturn(int spineIndex, int page) {
-  // epub is guaranteed non-null here: ensureEpubLoaded() was called in performSync() before
-  // SHOWING_RESULT state is entered, and this method is only called from that state.
-  assert(epub);
-  // The reader restores positions by chapter character offset; the remote
-  // position arrives as an estimated (page, totalPages), so persist it as a
-  // chapter fraction that resolves against totalChars() once the chapter's
-  // page cache opens.
-  const int totalPages = remotePosition.totalPages;
-  const uint32_t fractionQ16 =
-      (totalPages > 0 && page > 0 && page <= totalPages)
-          ? (static_cast<uint32_t>(page) << 16) / static_cast<uint32_t>(totalPages)
-          : 0;
-  if (!EpubReaderUtils::saveProgress(epub->getCachePath(), static_cast<uint16_t>(spineIndex),
-                                     EpubReaderUtils::kNoCharStart, fractionQ16)) {
+void KOReaderSyncActivity::saveProgressAndReturn() {
+  const uint32_t fractionQ16 = static_cast<uint32_t>(std::clamp(remotePosition.chapterFraction, 0.0f, 1.0f) * 65536.0f);
+  const bool ok =
+      remotePosition.hasCharStart
+          ? EpubReaderUtils::saveProgress(EpubReaderUtils::cacheDirForBook(epubPath),
+                                          static_cast<uint16_t>(remotePosition.spineIndex), remotePosition.charStart)
+          : EpubReaderUtils::saveProgress(EpubReaderUtils::cacheDirForBook(epubPath),
+                                          static_cast<uint16_t>(remotePosition.spineIndex),
+                                          EpubReaderUtils::kNoCharStart, fractionQ16);
+  if (!ok) {
     {
       RenderLock lock(*this);
       state = SYNC_FAILED;
@@ -171,10 +200,9 @@ void KOReaderSyncActivity::performSync() {
     return;
   }
 
-  // Epub was released before sync to free RAM for the TLS handshake — reload it now.
+  // The book was released before sync to free RAM for the TLS handshake — reload it now.
   hasRemoteProgress = true;
-  ensureEpubLoaded();
-  if (!epub) {
+  if (!ensureBookLoaded()) {
     {
       RenderLock lock(*this);
       state = SYNC_FAILED;
@@ -184,8 +212,7 @@ void KOReaderSyncActivity::performSync() {
     return;
   }
 
-  SavedProgressPosition koPos = {remoteProgress.progress, remoteProgress.percentage};
-  remotePosition = ProgressMapper::toCrossPoint(epub, koPos, renderer, currentSpineIndex, totalPagesInSpine);
+  resolveRemotePosition();
 
   // localProgress was pre-computed in EpubReaderActivity before the Epub was released.
   {
@@ -308,10 +335,10 @@ void KOReaderSyncActivity::render(RenderLock&&) {
     top = screen.y + metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_PROGRESS_FOUND), true, EpdFontFamily::BOLD);
 
-    // Remote chapter name requires Epub (loaded lazily in performSync before this state).
-    const int remoteTocIndex = epub->getTocIndexForSpineIndex(remotePosition.spineIndex);
+    // Remote chapter name requires the book (loaded lazily in performSync before this state).
+    const int remoteTocIndex = paginator.tocIndexForSpine(remotePosition.spineIndex);
     const std::string remoteChapter =
-        (remoteTocIndex >= 0) ? epub->getTocItem(remoteTocIndex).title
+        (remoteTocIndex >= 0) ? paginator.tocItem(remoteTocIndex).title
                               : (std::string(tr(STR_SECTION_PREFIX)) + std::to_string(remotePosition.spineIndex + 1));
     // Local chapter name was pre-computed before Epub was released.
     const std::string localChapter =
@@ -323,9 +350,10 @@ void KOReaderSyncActivity::render(RenderLock&&) {
     char remoteChapterStr[128];
     snprintf(remoteChapterStr, sizeof(remoteChapterStr), "  %s", remoteChapter.c_str());
     renderer.drawText(UI_10_FONT_ID, screen.x + metrics.contentSidePadding, top + 65, remoteChapterStr);
+    // No page number: the remote position is a character locator; its page is
+    // whatever the local pagination derives when the reader reopens.
     char remotePageStr[64];
-    snprintf(remotePageStr, sizeof(remotePageStr), tr(STR_PAGE_OVERALL_FORMAT), remotePosition.pageNumber + 1,
-             remoteProgress.percentage * 100);
+    snprintf(remotePageStr, sizeof(remotePageStr), tr(STR_PERCENT_OVERALL_FORMAT), remoteProgress.percentage * 100);
     renderer.drawText(UI_10_FONT_ID, screen.x + metrics.contentSidePadding, top + 90, remotePageStr);
 
     if (!remoteProgress.device.empty()) {
@@ -420,7 +448,7 @@ void KOReaderSyncActivity::loop() {
 
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
       if (selectedOption == 0) {
-        saveProgressAndReturn(remotePosition.spineIndex, remotePosition.pageNumber);
+        saveProgressAndReturn();
       } else if (selectedOption == 1) {
         // Upload local progress
         performUpload();

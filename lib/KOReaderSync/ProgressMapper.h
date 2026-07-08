@@ -19,13 +19,7 @@ struct CrossPointPosition {
   char xpathAnchorId[64] = {};     // First <a id> captured inside the matched XPath element
 };
 
-/**
- * Progress position representation.
- */
-struct SavedProgressPosition {
-  std::string xpath;  // XPath-like progress string
-  float percentage;   // Progress percentage (0.0 to 1.0)
-};
+#include "KOReaderPosition.h"  // SavedProgressPosition
 
 /**
  * Maps between CrossPoint and SavedProgress position formats, such as those used by KOReader.

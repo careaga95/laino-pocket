@@ -9,6 +9,12 @@
 
 namespace EpubReaderUtils {
 
+// Per-book cache directory, keyed by a hash of the book's path (moving or
+// renaming the file re-keys it — the long-standing CrossPoint convention).
+inline std::string cacheDirForBook(const std::string& path) {
+  return "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(path));
+}
+
 // Reader progress, FreeInkBook locator model. `charStart` (chapter character
 // offset) is layout-parameter independent — it restores exactly across font,
 // margin, spacing, and orientation changes. When a position is known only as
