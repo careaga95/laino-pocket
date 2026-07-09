@@ -12,8 +12,8 @@
 
 #include "I18n.h"
 #include "RecentBooksStore.h"
-#include "components/icons/bluetooth.h"
 #include "components/UITheme.h"
+#include "components/icons/bluetooth.h"
 #include "components/icons/bookmark.h"
 #include "fontIds.h"
 

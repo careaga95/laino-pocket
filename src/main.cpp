@@ -570,9 +570,9 @@ void loop() {
   static unsigned long lastMemPrint = 0;
 
   gpio.update();
-  updateBluetoothLifecycle();    // bring BLE up/down for the current activity context
+  updateBluetoothLifecycle();  // bring BLE up/down for the current activity context
   static bool lastBleConnected = false;
-  BleHid.poll();                 // drive BLE auto-reconnect + key auto-repeat (no-op when BT off)
+  BleHid.poll();  // drive BLE auto-reconnect + key auto-repeat (no-op when BT off)
   const bool bleConnected = BleHid.isConnected();
   if (bleConnected && !lastBleConnected) {
     LOG_INF("BLELC", "connected name=%s heap=%u maxAlloc=%u", BleHid.connectedName(), ESP.getFreeHeap(),
