@@ -250,6 +250,13 @@ class GfxRenderer {
   // Font helpers
   const uint8_t* getGlyphBitmap(const EpdFontData* fontData, const EpdGlyph* glyph) const;
 
+  // Lend the framebuffer to memory-hungry phases such as section pagination.
+  // Nothing may draw/display while it is released. restore returns the buffer
+  // white, so callers must redraw the full screen afterward.
+  void releaseFrameBufferForBuild();
+  bool restoreFrameBufferAfterBuild();
+  bool hasFrameBuffer() const { return frameBuffer != nullptr; }
+
   // Low level functions
   uint8_t* getFrameBuffer() const;
   size_t getBufferSize() const;

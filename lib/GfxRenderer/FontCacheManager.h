@@ -2,9 +2,9 @@
 
 #include <EpdFontFamily.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
-#include <string>
 
 class FontDecompressor;
 class SdCardFont;
@@ -51,7 +51,9 @@ class FontCacheManager {
 
   enum class ScanMode : uint8_t { None, Scanning };
   ScanMode scanMode_ = ScanMode::None;
-  std::string scanText_;
+  static constexpr size_t SCAN_TEXT_CAPACITY = 2048;
+  char scanText_[SCAN_TEXT_CAPACITY] = {};
+  size_t scanTextLen_ = 0;
   uint32_t scanStyleCounts_[4] = {};
   int scanFontId_ = -1;
 };

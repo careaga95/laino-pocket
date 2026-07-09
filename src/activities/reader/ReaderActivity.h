@@ -31,5 +31,6 @@ class ReaderActivity final : public Activity {
   explicit ReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string initialBookPath)
       : Activity("Reader", renderer, mappedInput), initialBookPath(std::move(initialBookPath)) {}
   void onEnter() override;
-  bool isReaderActivity() const override { return true; }
+  bool isReaderActivity() const override { return false; }
+  bool deferBluetoothStart() const override { return true; }
 };

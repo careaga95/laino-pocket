@@ -92,11 +92,10 @@ void EpubReaderMenuActivity::loop() {
 
     if (selectedAction == MenuAction::TOGGLE_BLUETOOTH) {
       // Just flip the preference and stay in the menu. The main-loop lifecycle check
-      // brings the BLE stack up/down to match (and shows the "BT Connecting..." popup),
-      // so start/stop has a single owner.
+      // brings the BLE stack up/down to match, so start/stop has a single owner.
       SETTINGS.bluetoothEnabled = SETTINGS.bluetoothEnabled ? 0 : 1;
       SETTINGS.saveToFile();
-      // Turning BT on below the lifecycle's heap floor would otherwise sit in PAUSED
+      // Turning BT on below the lifecycle's heap floor would otherwise wait
       // until the heap happens to recover -- which a long session's fragmentation never
       // gives back. The user asked for BT *now*: silent-restart into this book to
       // defrag (fresh boot is ~118 KB free, comfortably above the floor), and BT
@@ -161,10 +160,9 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
           // Render current page turn value on the right edge of the content area.
           return pageTurnLabels[selectedPageTurnOption];
         } else if (value == MenuAction::TOGGLE_BLUETOOTH) {
-          // Render current Bluetooth state on the right edge. "Enabled but the stack
-          // isn't running" is the low-memory deferral -- show PAUSED, not a lie.
           if (SETTINGS.bluetoothEnabled) {
-            return BleHid.isRunning() ? tr(STR_STATE_ON) : tr(STR_STATE_PAUSED);
+            if (!BleHid.isRunning()) return tr(STR_CONNECTING);
+            return BleHid.isConnected() ? tr(STR_STATE_ON) : tr(STR_CONNECTING);
           }
           return tr(STR_STATE_OFF);
         } else {

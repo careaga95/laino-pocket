@@ -13,16 +13,21 @@
 namespace bleinput {
 
 namespace {
-volatile bool g_lifecyclePaused = false;
+volatile bool g_startInProgress = false;
 }
 
 // NimBLE controller init/deinit hang (interrupt WDT) if run at the 10 MHz low-power
 // frequency, so force normal CPU speed around both. Centralized here so every caller
 // (boot restore, settings toggle, reader toggle, sleep) is covered automatically.
 bool ensureStarted() {
+  g_startInProgress = true;
   HalPowerManager::Lock powerLock;
-  return BleHid.begin(kHostName);
+  const bool ok = BleHid.begin(kHostName);
+  g_startInProgress = false;
+  return ok;
 }
+
+bool startInProgress() { return g_startInProgress; }
 
 // Full teardown (NimBLE deinit), not just a link drop, so the BLE stack's RAM is
 // returned to the heap — otherwise memory-hungry work like EPUB inflate can't
@@ -31,10 +36,6 @@ void stop() {
   HalPowerManager::Lock powerLock;
   BleHid.end();
 }
-
-void setLifecyclePaused(bool paused) { g_lifecyclePaused = paused; }
-
-bool lifecyclePaused() { return g_lifecyclePaused; }
 
 bool encodeKey(const freeink::KeyEvent& ev, uint8_t& kind, uint8_t& value) {
   if (ev.special != freeink::SpecialKey::None) {

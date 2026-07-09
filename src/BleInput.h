@@ -25,16 +25,11 @@ namespace bleinput {
 // Advertised central name shown to peripherals during pairing.
 inline constexpr const char* kHostName = "CrossPoint";
 
-// Heap floor for starting the NimBLE stack (measured begin() cost: ~52 KB). This must
-// be reachable in steady-state reading, not just at fresh boot: with an SD font and a
-// loaded section, mid-session idle heap is ~84 KB — a 100 KB floor was only ever
-// passed via a stale-gate bug (heap sampled before the render lock), and once that
-// was fixed the stack could never start again after a shed. 80 KB starts at ~84 KB
-// steady state and leaves ~32 KB of reading slack; the render shed floor
-// (RENDER_MIN_FREE_HEAP, 24 KB) backstops the tight sessions, and the lifecycle
-// cooldown paces any shed/restart cycle. Shared by the main-loop lifecycle gate and
-// the reader menu's toggle (which offers a defrag restart below the floor).
-inline constexpr size_t kStartMinFreeHeap = 80 * 1024;
+// Heap floor for starting the NimBLE stack (measured begin() cost: ~52-57 KB).
+// The reader now lends the framebuffer to section builds, so BLE startup no
+// longer needs to reserve the old full build headroom. Keep a modest margin and
+// let the render/build shed paths handle genuinely tight moments.
+inline constexpr size_t kStartMinFreeHeap = 56 * 1024;
 
 // Lower floor for the Bluetooth settings screen, where the user has explicitly asked
 // for BLE right now (scanning/pairing is dead without the stack). No page renders or
@@ -45,14 +40,10 @@ inline constexpr size_t kStartMinFreeHeapExplicit = 70 * 1024;
 // Start the BLE HID host (idempotent). Returns false if BLE is compiled out or
 // NimBLE init failed. Safe to call repeatedly.
 bool ensureStarted();
+bool startInProgress();
 
 // Drop the active link (e.g. before deep sleep or when the user disables BT).
 void stop();
-
-// Temporarily block the main-loop BLE lifecycle from auto-starting the stack.
-// Used while a render path deliberately frees BLE RAM for a large allocation.
-void setLifecyclePaused(bool paused);
-bool lifecyclePaused();
 
 // Encode a decoded key event into the stable (kind, value) identity used by the
 // settings map. kind: 0 = SpecialKey, 1 = HID usage. Returns false when the event

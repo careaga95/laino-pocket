@@ -67,6 +67,55 @@ bool isInReadFolder(const std::string& path) {
   return path.size() > n && path.compare(0, n, READ_FOLDER) == 0 && path[n] == '/';
 }
 
+class FrameBufferBuildLoan {
+ public:
+  explicit FrameBufferBuildLoan(GfxRenderer& renderer) : renderer_(renderer) {}
+  ~FrameBufferBuildLoan() {
+    if (active_ && !restore()) {
+      ESP.restart();
+    }
+  }
+
+  void release() {
+    if (active_ || !renderer_.hasFrameBuffer()) return;
+    if (bleinput::startInProgress()) {
+      LOG_INF("ERS", "Framebuffer loan waiting for BLE start to settle");
+      const uint32_t deadline = millis() + 1000;
+      while (bleinput::startInProgress() && millis() < deadline) {
+        delay(5);
+      }
+    }
+    renderer_.releaseFrameBufferForBuild();
+    active_ = true;
+    LOG_DBG("ERS", "Framebuffer lent for section build (ble=%u heap=%u maxAlloc=%u)", BleHid.isRunning() ? 1 : 0,
+            (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+  }
+
+  bool restore() {
+    if (!active_) return true;
+    active_ = false;
+    if (renderer_.restoreFrameBufferAfterBuild()) {
+      LOG_DBG("ERS", "Framebuffer restored after section build");
+      return true;
+    }
+    if (BleHid.isRunning()) {
+      LOG_INF("ERS", "Framebuffer restore needs heap; freeing BLE and retrying (heap=%u maxAlloc=%u)",
+              (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+      bleinput::stop();
+      if (renderer_.restoreFrameBufferAfterBuild()) {
+        LOG_DBG("ERS", "Framebuffer restored after freeing BLE");
+        return true;
+      }
+    }
+    LOG_ERR("ERS", "Framebuffer restore failed after section build");
+    return false;
+  }
+
+ private:
+  GfxRenderer& renderer_;
+  bool active_ = false;
+};
+
 struct ProgressRange {
   float start;
   float end;
@@ -263,6 +312,11 @@ bool EpubReaderActivity::buildTickHeapGate() {
   if (freeHeap >= BACKGROUND_BUILD_MIN_FREE_HEAP && maxBlock >= BACKGROUND_BUILD_MIN_MAX_ALLOC) {
     return true;
   }
+  const size_t lendableFrameBuffer = renderer.hasFrameBuffer() ? renderer.getBufferSize() : 0;
+  if (lendableFrameBuffer > 0 && freeHeap + lendableFrameBuffer >= BACKGROUND_BUILD_MIN_FREE_HEAP &&
+      maxBlock + lendableFrameBuffer >= BACKGROUND_BUILD_MIN_MAX_ALLOC) {
+    return true;
+  }
   // Below the floors. If the BLE stack is what's squeezing the heap, shed it — the
   // established policy on this branch is that builds and resident BLE don't coexist,
   // and this was the one build path without that protection (field crash: a tick's
@@ -300,6 +354,8 @@ void EpubReaderActivity::loop() {
     // mutation, so it flags this as always true.
     // cppcheck-suppress knownConditionTrueFalse
     if (section->isBuilding()) {
+      FrameBufferBuildLoan buildLoan(renderer);
+      buildLoan.release();
       if (!section->buildSomeMore(BACKGROUND_BUILD_PAGES_PER_TICK)) {
         LOG_ERR("ERS", "Background section build failed");
         section.reset();
@@ -308,6 +364,9 @@ void EpubReaderActivity::loop() {
         // The chapter re-paginated since the saved progress (settings changed): we now know the
         // real page count, so re-render at the remapped page. No-op for an unchanged resume.
         requestUpdate();
+      }
+      if (!buildLoan.restore()) {
+        ESP.restart();
       }
     }
   }
@@ -910,15 +969,6 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     return;
   }
 
-  // The build-recovery path below frees the BLE stack and pauses the main-loop lifecycle
-  // so it can't restart NimBLE while this render is still allocating (glyph prewarm, scan
-  // strings -- an inline restart re-starved exactly that and abort()ed). Unpause only
-  // when the render fully completes, on every exit path; the main-loop lifecycle then
-  // brings BLE back and shows its reconnect popup.
-  struct LifecycleUnpause {
-    ~LifecycleUnpause() { bleinput::setLifecyclePaused(false); }
-  } lifecycleUnpause;
-
   // Shed the BLE stack before rendering into a starved heap. Everything below —
   // page deserialization, glyph caching, catch-up build steps — allocates through
   // throwing paths that abort() on OOM under -fno-exceptions. Field data: with no
@@ -929,7 +979,6 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   if (BleHid.isRunning() && ESP.getFreeHeap() < RENDER_MIN_FREE_HEAP) {
     LOG_ERR("ERS", "Render heap %u below floor %u; freeing BLE RAM", (unsigned)ESP.getFreeHeap(),
             (unsigned)RENDER_MIN_FREE_HEAP);
-    bleinput::setLifecyclePaused(true);
     bleinput::stop();
   }
 
@@ -939,10 +988,16 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     GUI.drawPopup(renderer, tr(STR_SAVE_PROGRESS_FAILED));
   };
 
+  FrameBufferBuildLoan buildLoan(renderer);
+
   // A section build failure (e.g. an invalid/corrupt EPUB that fails XML parsing) leaves the
   // "Indexing" popup on screen with no way forward. Surface an explicit error instead of hanging.
   // clearScreen first so the error popup doesn't overlay the stale "Indexing" popup.
-  const auto showBuildError = [this]() {
+  const auto showBuildError = [this, &buildLoan]() {
+    if (!buildLoan.restore()) {
+      ESP.restart();
+      return;
+    }
     renderer.clearScreen();
     GUI.drawPopup(renderer, tr(STR_INDEX_FAILED));
     automaticPageTurnActive = false;
@@ -1026,10 +1081,11 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       // the build: pre-flight the floor and take the recovery path up front instead of
       // crashing mid-parse. Field data: builds succeed at ~46 KB free with BLE resident;
       // abort() observed at ~11 KB free.
-      const bool heapTooLow = ESP.getFreeHeap() < BUILD_MIN_FREE_HEAP;
+      const size_t lendableFrameBuffer = renderer.hasFrameBuffer() ? renderer.getBufferSize() : 0;
+      const bool heapTooLow = ESP.getFreeHeap() + lendableFrameBuffer < BUILD_MIN_FREE_HEAP;
       if (heapTooLow) {
-        LOG_ERR("ERS", "Pre-build heap %u below floor %u; entering build recovery", (unsigned)ESP.getFreeHeap(),
-                (unsigned)BUILD_MIN_FREE_HEAP);
+        LOG_ERR("ERS", "Pre-build heap %u (+fb %u) below floor %u; entering build recovery",
+                (unsigned)ESP.getFreeHeap(), (unsigned)lendableFrameBuffer, (unsigned)BUILD_MIN_FREE_HEAP);
       }
 
       // Building a section needs a large contiguous inflate (deflate) window that the
@@ -1038,14 +1094,10 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       // and retry. The chapter is cached afterwards, so this recovery runs at most once
       // per uncached chapter.
       // Deliberately do NOT restart BLE inline: this render still has its own allocations
-      // to make (glyph prewarm, scan strings), and an inline NimBLE restart re-starves
-      // it -- field crash: std::string::reserve(2048) abort()ed at ~8 KB free right
-      // after an inline restart. The lifecycle stays paused until this render fully
-      // completes (unpause guard at the top of render()); the main-loop lifecycle then
-      // restarts BLE behind its own heap gate and shows the reconnect popup.
+      // to make. The main-loop lifecycle restarts BLE later, behind its activity,
+      // render-lock, framebuffer, and heap gates.
       const auto retryWithBleFreed = [&](auto&& buildFn) {
         LOG_INF("ERS", "Section build needs heap; freeing BLE RAM and retrying");
-        bleinput::setLifecyclePaused(true);
         bleinput::stop();
         return buildFn();
       };
@@ -1080,7 +1132,12 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         // The popup's own refresh is a plain FAST, so force the page that replaces it onto the HALF
         // ghost-cleanup path -- otherwise the "INDEXING" text ghosts under the rendered page.
         pagesUntilFullRefresh = 1;
-        const auto popupFn = [this]() { GUI.drawPopup(renderer, tr(STR_INDEXING)); };
+        const auto popupFn = [this]() {
+          if (renderer.hasFrameBuffer()) {
+            GUI.drawPopup(renderer, tr(STR_INDEXING));
+          }
+        };
+        buildLoan.release();
         const auto buildSection = [&]() {
           return section->createSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
                                             SETTINGS.extraParagraphSpacing, SETTINGS.paragraphAlignment, viewportWidth,
@@ -1131,6 +1188,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
           // HALF-clear the popup when the page replaces it, else "INDEXING" ghosts under the page.
           pagesUntilFullRefresh = 1;
         }
+        buildLoan.release();
         // startBuild does the zip inflate (the big contiguous allocation), so it gets
         // the BLE free-and-retry fallback too; it cleans up fully on failure, making a
         // retry safe.
@@ -1206,6 +1264,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   // ahead of the background builder; pages already built do no work here.
   while (section->isPartial() && section->currentPage >= static_cast<int>(section->pageCount)) {
     // Start a build to extend a partial toward the requested page.
+    buildLoan.release();
     if (!section->isBuilding() &&
         !section->startBuild(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
                              SETTINGS.extraParagraphSpacing, SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
@@ -1228,6 +1287,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   }
   // For an in-progress incremental build, make sure the page we're about to show has been laid out.
   if (section->isBuilding()) {
+    buildLoan.release();
     while (!section->isBuildComplete() && section->currentPage >= static_cast<int>(section->pageCount)) {
       if (!section->buildSomeMore(BUILD_PAGES_PER_CHUNK)) {
         LOG_ERR("ERS", "Failed during incremental section build");
@@ -1237,6 +1297,14 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       }
     }
   }
+
+  const auto restoreFramebufferForDraw = [&buildLoan]() {
+    if (!buildLoan.restore()) {
+      ESP.restart();
+      return false;
+    }
+    return true;
+  };
 
   // The requested page is now as built as it will get. If it still lands past the end,
   // clamp to the last real page: the UINT16_MAX "last page" sentinel from backward chapter
@@ -1252,10 +1320,10 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   // a plain resume / unchanged pagination). If still building, this defers to loop() on completion.
   applyDeferredReposition();
 
-  renderer.clearScreen();
-
   if (section->pageCount == 0) {
     LOG_DBG("ERS", "No pages to render");
+    if (!restoreFramebufferForDraw()) return;
+    renderer.clearScreen();
     renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_EMPTY_CHAPTER), true, EpdFontFamily::BOLD);
     renderStatusBar();
     renderer.displayBuffer();
@@ -1266,6 +1334,8 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
   if (section->currentPage < 0 || section->currentPage >= section->pageCount) {
     LOG_DBG("ERS", "Page out of bounds: %d (max %d)", section->currentPage, section->pageCount);
+    if (!restoreFramebufferForDraw()) return;
+    renderer.clearScreen();
     renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_OUT_OF_BOUNDS), true, EpdFontFamily::BOLD);
     renderStatusBar();
     renderer.displayBuffer();
@@ -1294,6 +1364,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       if (giveUp) {
         LOG_ERR("ERS", "Page load retry limit reached, aborting");
         pageLoadRetryCount = 0;  // Reset so a later user-initiated navigation can try afresh
+        if (!restoreFramebufferForDraw()) return;
         renderer.clearScreen();
         renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_PAGE_LOAD_ERROR), true, EpdFontFamily::BOLD);
         renderer.displayBuffer();
@@ -1308,6 +1379,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
     // Collect footnotes from the loaded page
     currentPageFootnotes = std::move(p->footnotes);
+
+    if (!restoreFramebufferForDraw()) return;
+    renderer.clearScreen();
 
     const auto start = millis();
     renderContents(std::move(p), orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft);
@@ -1557,6 +1631,11 @@ void EpubReaderActivity::renderStatusBar() const {
 
   } else if (SETTINGS.statusBarTitle == CrossPointSettings::STATUS_BAR_TITLE::BOOK_TITLE) {
     title = epub->getTitle();
+  }
+
+  if (SETTINGS.bluetoothEnabled && !BleHid.isConnected()) {
+    const std::string btStatus = tr(STR_BT_CONNECTING_POPUP);
+    title = title.empty() ? btStatus : btStatus + "  " + title;
   }
 
   GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset, true, currentPageBookmarked,

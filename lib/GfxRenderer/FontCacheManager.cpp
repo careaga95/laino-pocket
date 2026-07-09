@@ -62,7 +62,14 @@ void FontCacheManager::resetStats() {
 bool FontCacheManager::isScanning() const { return scanMode_ == ScanMode::Scanning; }
 
 void FontCacheManager::recordText(const char* text, int fontId, EpdFontFamily::Style style) {
-  scanText_ += text;
+  if (!text) return;
+  const size_t remaining = (scanTextLen_ < SCAN_TEXT_CAPACITY - 1) ? (SCAN_TEXT_CAPACITY - 1 - scanTextLen_) : 0;
+  if (remaining > 0) {
+    const size_t textLen = strnlen(text, remaining);
+    memcpy(scanText_ + scanTextLen_, text, textLen);
+    scanTextLen_ += textLen;
+    scanText_[scanTextLen_] = '\0';
+  }
   if (scanFontId_ < 0) scanFontId_ = fontId;
   const uint8_t baseStyle = static_cast<uint8_t>(style) & 0x03;
   const unsigned char* p = reinterpret_cast<const unsigned char*>(text);
@@ -80,15 +87,15 @@ FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager) : manage
   manager_->scanMode_ = ScanMode::Scanning;
   manager_->clearCache();
   manager_->resetStats();
-  manager_->scanText_.clear();
-  manager_->scanText_.reserve(2048);  // Pre-allocate to avoid heap fragmentation from repeated concat
+  manager_->scanTextLen_ = 0;
+  manager_->scanText_[0] = '\0';
   memset(manager_->scanStyleCounts_, 0, sizeof(manager_->scanStyleCounts_));
   manager_->scanFontId_ = -1;
 }
 
 void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
   manager_->scanMode_ = ScanMode::None;
-  if (manager_->scanText_.empty()) return;
+  if (manager_->scanTextLen_ == 0) return;
 
   // Build style bitmask from all styles that appeared during the scan
   uint8_t styleMask = 0;
@@ -97,11 +104,10 @@ void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
   }
   if (styleMask == 0) styleMask = 1;  // default to regular
 
-  manager_->prewarmCache(manager_->scanFontId_, manager_->scanText_.c_str(), styleMask);
+  manager_->prewarmCache(manager_->scanFontId_, manager_->scanText_, styleMask);
 
-  // Free scan string memory
-  manager_->scanText_.clear();
-  manager_->scanText_.shrink_to_fit();
+  manager_->scanTextLen_ = 0;
+  manager_->scanText_[0] = '\0';
 }
 
 FontCacheManager::PrewarmScope::~PrewarmScope() {

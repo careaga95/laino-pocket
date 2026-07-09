@@ -47,6 +47,12 @@ class HalDisplay {
   // Access to frame buffer
   uint8_t* getFrameBuffer() const;
 
+  // Lend the framebuffer's RAM to a memory-hungry phase. No display calls may
+  // run between release and a successful realloc; buffers come back white, so
+  // callers must redraw the full screen.
+  void releaseFrameBuffers();
+  bool reallocFrameBuffers();
+
   // X3 grayscale preconditioning (OEM "AA-pre-BW(mid)" settle pass), windowed
   // to the gray region in physical panel coordinates (no-arg = full frame).
   // Call after the BW base frame is displayed and before the grayscale planes

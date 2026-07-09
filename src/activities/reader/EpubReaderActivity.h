@@ -156,15 +156,6 @@ class EpubReaderActivity final : public Activity {
   void loop() override;
   void render(RenderLock&& lock) override;
   bool isReaderActivity() const override { return true; }
-  // Hold BLE off only while the background build has catch-up work pending inside
-  // its window (same condition loop() uses to tick it). Gating on isBuilding() alone
-  // would hold BLE off for the rest of the chapter — a windowed build stays
-  // "building" until the reader walks the whole spine. Unlocked read, same pattern
-  // as the background-build check in loop().
-  bool deferBluetoothStart() const override {
-    return section && section->isBuilding() &&
-           static_cast<int>(section->pageCount) < section->currentPage + BUILD_WINDOW_AHEAD;
-  }
   void requestGhostCleanup() override { pagesUntilFullRefresh = 1; }
   ScreenshotInfo getScreenshotInfo() const override;
   CrossPointPosition getCurrentPosition() const;

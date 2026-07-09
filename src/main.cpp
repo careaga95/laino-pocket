@@ -497,68 +497,49 @@ void setup() {
 
 // Bring the BLE stack up or down to match the current context. BLE is only resident
 // while a reader (page-turner input) or the Bluetooth settings screen (pairing) is on
-// the stack AND WiFi is off — WiFi and BLE share the one C3 radio and can't both fit in
-// heap. Called every loop; ensureStarted()/stop() are no-ops when already in the right
-// state, so this only does work on a transition.
+// the stack AND WiFi is off. Heap-heavy reader phases may stop BLE directly; this
+// lifecycle then restarts it only after the normal activity/render/heap gates pass.
 void updateBluetoothLifecycle() {
   const bool wanted =
       SETTINGS.bluetoothEnabled && activityManager.bluetoothShouldBeActive() && WiFi.getMode() == WIFI_MODE_NULL;
-  // Track recovery teardowns: while the reader's build recovery holds the lifecycle
-  // paused it has taken BLE down deliberately. After that, hold a cool-down before any
-  // restart -- an immediate restart re-enters the exact heap state that just failed and
-  // the lifecycle becomes an oscillator (restart -> connect popup -> build fails ->
-  // teardown -> restart...), observed in the field as a "BT Connecting..." loop.
-  static uint32_t recoveryTeardownMs = 0;
-  if (bleinput::lifecyclePaused()) recoveryTeardownMs = millis();
-  if (wanted && !BleHid.isRunning() && bleinput::lifecyclePaused()) return;
-  // Never start while the reader has build catch-up work pending: restarting into a
-  // pending build just re-enters the heap state that forced the shed (field: a
-  // 163 ms shed -> restart -> shed flap at a chapter watermark). Builds tick fast;
-  // the deferral clears itself within seconds and no popup is warranted.
   if (wanted && !BleHid.isRunning() && activityManager.bluetoothStartDeferred()) {
-    static uint32_t lastBuildDeferLogMs = 0;
-    if (millis() - lastBuildDeferLogMs > 10000) {
-      lastBuildDeferLogMs = millis();
-      LOG_INF("BLELC", "start deferred: section build in progress heap=%u", ESP.getFreeHeap());
+    static uint32_t lastActivityDeferLogMs = 0;
+    if (millis() - lastActivityDeferLogMs > 10000) {
+      lastActivityDeferLogMs = millis();
+      LOG_INF("BLELC", "start deferred: activity busy heap=%u maxAlloc=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     }
     return;
   }
-  static constexpr uint32_t BLE_RESTART_COOLDOWN_MS = 30 * 1000;
-  const bool inCooldown = recoveryTeardownMs != 0 && millis() - recoveryTeardownMs < BLE_RESTART_COOLDOWN_MS;
-  // Heap gate: NimBLE needs ~57 KB, and the section-build pre-flight needs 40 KB free
-  // AFTER the stack is up -- so anything below the floor just re-enters build recovery
-  // and tears BLE straight back down. (A first cut used 70 KB for restarts; 70-57=13 KB
-  // left for builds, guaranteeing the oscillation above.) Defer and retry next loop;
-  // the reader menu's toggle offers a defrag restart, and the build path's silent
-  // restart also yields ~118 KB and passes this gate.
-  static bool deferralAnnounced = false;
+  // Heap gate: NimBLE needs ~57 KB. If the reader cannot spare that yet, retry
+  // on the next loop without entering any separate BLE hold state.
   // The BT settings screen is explicit user intent to run BLE right now (scan/pair is
   // dead without the stack). Its floor only needs to cover NimBLE itself — the 100 KB
-  // reader floor reserves build/render headroom that never gets used there — and the
-  // cooldown protects the reader's build-recovery loop, which can't occur in settings.
+  // reader floor reserves build/render headroom that never gets used there.
   const bool explicitBtContext = activityManager.currentKeepsBluetoothAlive();
   const size_t startFloor = explicitBtContext ? bleinput::kStartMinFreeHeapExplicit : bleinput::kStartMinFreeHeap;
-  if (wanted && !BleHid.isRunning() && ((inCooldown && !explicitBtContext) || ESP.getFreeHeap() < startFloor)) {
+  if (wanted && !BleHid.isRunning() && activityManager.isReaderActivity() && !renderer.hasFrameBuffer()) {
+    static uint32_t lastFramebufferLoanDeferLogMs = 0;
+    if (millis() - lastFramebufferLoanDeferLogMs > 10000) {
+      lastFramebufferLoanDeferLogMs = millis();
+      LOG_INF("BLELC", "start deferred: framebuffer lent heap=%u maxAlloc=%u", ESP.getFreeHeap(),
+              ESP.getMaxAllocHeap());
+    }
+    return;
+  }
+  if (wanted && !BleHid.isRunning() && activityManager.isReaderActivity() && RenderLock::peek()) {
+    static uint32_t lastReaderRenderDeferLogMs = 0;
+    if (millis() - lastReaderRenderDeferLogMs > 10000) {
+      lastReaderRenderDeferLogMs = millis();
+      LOG_INF("BLELC", "start deferred: reader render in progress heap=%u maxAlloc=%u", ESP.getFreeHeap(),
+              ESP.getMaxAllocHeap());
+    }
+    return;
+  }
+  if (wanted && !BleHid.isRunning() && ESP.getFreeHeap() < startFloor) {
     static uint32_t lastGateLogMs = 0;
     if (millis() - lastGateLogMs > 10000) {
       lastGateLogMs = millis();
-      LOG_INF("BLELC", "start deferred: heap %u floor %u cooldown=%d", ESP.getFreeHeap(), (unsigned)startFloor,
-              inCooldown ? 1 : 0);
-    }
-    // Tell the reader once per deferral episode that the remote is paused -- otherwise
-    // the only symptom is a remote that silently stopped working. Draws into the
-    // existing framebuffer (no heap); the next page render clears it via ghost cleanup.
-    if (!deferralAnnounced && activityManager.isReaderActivity() && BleHid.pairedCount() > 0) {
-      deferralAnnounced = true;
-      {
-        RenderLock renderLock;
-        GUI.drawPopup(renderer, tr(STR_BT_PAUSED_LOW_MEM_POPUP));
-        activityManager.requestGhostCleanup();
-      }
-      // Toast semantics: request a redraw so the popup clears after the (~2 s) page
-      // re-render instead of lingering until the next page turn. E-ink has no free
-      // timers -- clearing costs one refresh whenever it happens, so do it now.
-      activityManager.requestUpdate();
+      LOG_INF("BLELC", "start deferred: heap %u floor %u", ESP.getFreeHeap(), (unsigned)startFloor);
     }
     return;
   }
@@ -566,35 +547,15 @@ void updateBluetoothLifecycle() {
     LOG_INF("BLELC", "start requested enabled=%u reader=%d settings=%d wifi=%d paired=%u heap=%u maxAlloc=%u",
             SETTINGS.bluetoothEnabled, activityManager.isReaderActivity(), activityManager.currentKeepsBluetoothAlive(),
             WiFi.getMode(), BleHid.pairedCount(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    RenderLock renderLock;
-    // Re-check the floor under the lock: acquiring the RenderLock waits out any
-    // in-flight render, and a chapter open during that render consumes tens of KB —
-    // observed in the field as the gate passing at 116 KB free and begin() then
-    // landing on 44 KB, where the session ground down and aborted. Defer to the next
-    // tick; the gate re-evaluates against the settled heap.
-    if (ESP.getFreeHeap() < startFloor || activityManager.bluetoothStartDeferred() || bleinput::lifecyclePaused()) {
-      LOG_INF("BLELC", "start aborted under render lock: heap %u floor %u", ESP.getFreeHeap(), (unsigned)startFloor);
-      return;
-    }
+    // Start immediately once the lifecycle gates pass. Do not draw a reconnect
+    // popup here: that schedules a reader redraw while BLE has just consumed ~53 KB,
+    // which can immediately trip the render heap shed path and create a start/stop loop.
     if (!bleinput::ensureStarted()) {
       LOG_ERR("BLELC", "start failed heap=%u maxAlloc=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       return;
     }
     LOG_INF("BLELC", "started paired=%u heap=%u maxAlloc=%u", BleHid.pairedCount(), ESP.getFreeHeap(),
             ESP.getMaxAllocHeap());
-    recoveryTeardownMs = 0;     // stack is back; clear the cool-down
-    deferralAnnounced = false;  // re-announce if a later episode defers again
-    HalPowerManager::Lock powerLock;
-    const bool showReconnectPopup =
-        activityManager.isReaderActivity() && !activityManager.currentKeepsBluetoothAlive() && BleHid.pairedCount() > 0;
-    if (showReconnectPopup) {
-      // Single place BLE starts for reader reconnect. Then clear it with a
-      // ghost-cleanup (HALF) refresh so a grayscale page doesn't ghost over the
-      // popup.
-      bleinput::showConnectingUntilLinked(renderer, mappedInputManager);
-      activityManager.requestGhostCleanup();
-      activityManager.requestUpdate();
-    }
   } else if (!wanted && BleHid.isRunning()) {
     LOG_INF("BLELC", "stop requested enabled=%u active=%d wifi=%d heap=%u maxAlloc=%u", SETTINGS.bluetoothEnabled,
             activityManager.bluetoothShouldBeActive(), WiFi.getMode(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
