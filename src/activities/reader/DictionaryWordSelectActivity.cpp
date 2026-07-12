@@ -2,6 +2,7 @@
 
 #include <FontCacheManager.h>
 #include <GfxRenderer.h>
+#include <Memory.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -41,6 +42,10 @@ void DictionaryWordSelectActivity::onEnter() {
   Activity::onEnter();
   fontId = SETTINGS.getReaderFontId();
   lineHeight = renderer.getLineHeight(fontId);
+  // No null check: a failed allocation just disables the differential
+  // fast path (drawHighlightWithSnapshot skips the read), keeping the
+  // full-repaint path as the fallback.
+  snapshot = makeUniqueNoThrow<uint8_t[]>(SNAPSHOT_CAPACITY);
   extractWords();
   requestUpdate();
 }
@@ -181,7 +186,60 @@ void DictionaryWordSelectActivity::loop() {
   }
 }
 
+// Saves the pixels under words[selected]'s highlight box, then draws the
+// highlight over them. Returns false when the pixels could not be saved
+// (no buffer / oversize box) — the highlight is drawn regardless, but the
+// next cursor move must do a full repaint.
+bool DictionaryWordSelectActivity::drawHighlightWithSnapshot() {
+  const WordBox& word = words[selected];
+  int hx = word.x - 2;
+  int hy = word.y - 2;
+  int hw = word.width + 4;
+  int hh = lineHeight + 4;
+  // Clamp to the panel: read/write take unsigned coordinates, and using the
+  // same clamped box for save, draw and restore keeps them consistent.
+  if (hx < 0) {
+    hw += hx;
+    hx = 0;
+  }
+  if (hy < 0) {
+    hh += hy;
+    hy = 0;
+  }
+
+  bool saved = false;
+  if (snapshot && hw > 0 && hh > 0) {
+    saved = renderer.readFramebufferRegion(hx, hy, hw, hh, snapshot.get(), SNAPSHOT_CAPACITY) > 0;
+  }
+  snapshotX = static_cast<int16_t>(hx);
+  snapshotY = static_cast<int16_t>(hy);
+  snapshotW = static_cast<int16_t>(hw);
+  snapshotH = static_cast<int16_t>(hh);
+  snapshotIdx = saved ? selected : -1;
+
+  renderer.fillRect(hx, hy, hw, hh, true);
+  renderer.drawText(fontId, word.x, word.y, word.text, false, word.style);
+  return saved;
+}
+
 void DictionaryWordSelectActivity::render(RenderLock&&) {
+  // Differential fast path: only the highlight moved and the framebuffer
+  // still holds a clean page (no popup or sub-activity since the last full
+  // repaint). Restore the pixels under the old highlight, draw the new one,
+  // and push — skipping the two-pass page render entirely.
+  if (popup == Popup::None && snapshotIdx >= 0 && !words.empty() && selected != snapshotIdx) {
+    renderer.writeFramebufferRegion(snapshotX, snapshotY, snapshotW, snapshotH, snapshot.get());
+    // The full path's PrewarmScope cleared the glyph cache on exit; batch-load
+    // just the highlighted word's glyphs before drawing them white-on-black.
+    renderer.getFontCacheManager()->prewarmCache(
+        fontId, words[selected].text, static_cast<uint8_t>(1u << (static_cast<uint8_t>(words[selected].style) & 0x03)));
+    if (drawHighlightWithSnapshot()) {
+      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+      return;
+    }
+    // Snapshot failed (oversize box) — fall through to a full repaint.
+  }
+
   renderer.clearScreen();
 
   // Same prewarm-scan-then-render pass the reader uses, so SD-card fonts hit
@@ -193,12 +251,13 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
   page->render(renderer, fontId, marginLeft, marginTop);
 
   if (!words.empty()) {
-    const WordBox& word = words[selected];
-    renderer.fillRect(word.x - 2, word.y - 2, word.width + 4, lineHeight + 4, true);
-    renderer.drawText(fontId, word.x, word.y, word.text, false, word.style);
+    drawHighlightWithSnapshot();
   }
 
   if (popup != Popup::None) {
+    // The popup overdraws the page, so the snapshot no longer matches the
+    // framebuffer — force the next render onto the full-repaint path.
+    snapshotIdx = -1;
     // drawPopup overlays the framebuffer and refreshes the display itself.
     // I18N.get directly: tr() only accepts literal key names.
     GUI.drawPopup(renderer, I18N.get(popupMsg));
