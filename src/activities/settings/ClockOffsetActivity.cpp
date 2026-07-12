@@ -229,7 +229,7 @@ void ClockOffsetActivity::loop() {
         if (touchedField == FIELD_SIGN) {
           activeField = FIELD_SIGN;
           adjustActiveField(+1);
-        } else if (activeField != touchedField) {
+        } else {
           activeField = touchedField;
         }
         requestUpdate();
