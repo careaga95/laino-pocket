@@ -1,5 +1,6 @@
 #include "DictionaryDefinitionActivity.h"
 
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 
@@ -24,6 +25,9 @@ constexpr int SIDE_PADDING = 20;
 
 void DictionaryDefinitionActivity::onEnter() {
   Activity::onEnter();
+  // Normalize StarDict multi-type separators so the wrap loop and the
+  // C-string font APIs below both see the whole definition.
+  std::replace(definition.begin(), definition.end(), '\0', '\n');
   wrapText();
   requestUpdate();
 }
@@ -37,14 +41,19 @@ int DictionaryDefinitionActivity::measureSpan(const int fontId, const char* text
 }
 
 // Greedy word-wrap of `definition` into byte spans. '\n' breaks lines (blank
-// lines survive as paragraph spacing); '\0' separates parts of multi-type
-// StarDict entries and is treated as a newline; '\r' is dropped by treating it
-// as a space at a token edge.
+// lines survive as paragraph spacing; NULs from multi-type StarDict entries
+// were normalized to newlines in onEnter); '\r' is dropped by treating it as
+// a space at a token edge.
 void DictionaryDefinitionActivity::wrapText() {
   lines.clear();
   lines.reserve(definition.size() / 32 + 8);
 
   const int fontId = SETTINGS.getReaderFontId();
+  // SD-card fonts: merge every definition codepoint into the persistent
+  // advance table up front. Otherwise each unseen codepoint measured below
+  // falls back to an on-demand glyph load from SD (8-slot overflow ring).
+  renderer.ensureSdCardFontReady(fontId, definition.c_str(), 0x01 /* REGULAR */);
+
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto orientation = renderer.getOrientation();
   const bool isLandscape = orientation == GfxRenderer::Orientation::LandscapeClockwise ||
@@ -158,6 +167,23 @@ void DictionaryDefinitionActivity::loop() {
   });
 }
 
+// Draws the current page's line spans (copied into a stack buffer for NUL
+// termination). Called twice per render: once in font-cache scan mode, once
+// for the real paint.
+void DictionaryDefinitionActivity::drawBody(const int fontId, const int x, const int startY) const {
+  const int lineHeight = renderer.getLineHeight(fontId);
+  char buf[MAX_LINE_BYTES + 1];
+  const int firstLine = currentPage * linesPerPage;
+  const int lastLine = std::min(firstLine + linesPerPage, static_cast<int>(lines.size()));
+  for (int i = firstLine; i < lastLine; i++) {
+    if (lines[i].len == 0) continue;
+    const size_t len = std::min(static_cast<size_t>(lines[i].len), MAX_LINE_BYTES);
+    memcpy(buf, definition.c_str() + lines[i].start, len);
+    buf[len] = '\0';
+    renderer.drawText(fontId, x, startY + (i - firstLine) * lineHeight, buf);
+  }
+}
+
 void DictionaryDefinitionActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
@@ -181,20 +207,16 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
     renderer.drawText(UI_10_FONT_ID, contentX + contentWidth - SIDE_PADDING - counterWidth, headerY, counter);
   }
 
-  // Body: this page's line spans copied into a stack buffer for NUL termination.
+  // Body: two-pass draw inside a prewarm scope (same pattern as the reader's
+  // renderContents) so SD-card font glyphs load from SD in one batch instead
+  // of one on-demand overflow read per character on every page turn.
   const int fontId = SETTINGS.getReaderFontId();
-  const int lineHeight = renderer.getLineHeight(fontId);
   const int bodyStartY = contentY + metrics.topPadding + metrics.headerHeight;
-  char buf[MAX_LINE_BYTES + 1];
-  const int firstLine = currentPage * linesPerPage;
-  const int lastLine = std::min(firstLine + linesPerPage, static_cast<int>(lines.size()));
-  for (int i = firstLine; i < lastLine; i++) {
-    if (lines[i].len == 0) continue;
-    const size_t len = std::min(static_cast<size_t>(lines[i].len), MAX_LINE_BYTES);
-    memcpy(buf, definition.c_str() + lines[i].start, len);
-    buf[len] = '\0';
-    renderer.drawText(fontId, contentX + SIDE_PADDING, bodyStartY + (i - firstLine) * lineHeight, buf);
-  }
+  auto* fcm = renderer.getFontCacheManager();
+  auto scope = fcm->createPrewarmScope();
+  drawBody(fontId, contentX + SIDE_PADDING, bodyStartY);  // scan pass: records codepoints only
+  scope.endScanAndPrewarm();
+  drawBody(fontId, contentX + SIDE_PADDING, bodyStartY);
 
   const auto labels =
       mappedInput.mapLabels(tr(STR_BACK), "", (currentPage > 0 ? "<" : ""), (currentPage + 1 < totalPages ? ">" : ""));

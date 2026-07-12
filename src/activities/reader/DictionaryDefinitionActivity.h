@@ -32,9 +32,12 @@ class DictionaryDefinitionActivity final : public Activity {
 
   void wrapText();
   int measureSpan(int fontId, const char* text, size_t len) const;
+  void drawBody(int fontId, int x, int startY) const;
 
   const std::string headword;
-  const std::string definition;
+  // Not const: onEnter() normalizes embedded NULs (StarDict multi-type
+  // separators) to newlines so C-string APIs see the whole text.
+  std::string definition;
   std::vector<Line> lines;
   int currentPage = 0;
   int totalPages = 1;
