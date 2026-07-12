@@ -42,8 +42,6 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 
 ### Coming soon:
 
-- Dictionary lookup — inline word lookup without leaving the reader.
-
 - More themes.
 
 - Much more! stay tuned.

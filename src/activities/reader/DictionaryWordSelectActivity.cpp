@@ -26,7 +26,8 @@ bool isSelectableToken(const char* text) {
     if (*p < 0x80) {
       if (std::isalnum(*p)) return true;
     } else if (*p == 0xE2 && (p[1] == 0x80 || p[1] == 0x81)) {
-      p += 2;  // skip the 3-byte General Punctuation codepoint
+      if (p[2] == 0) break;  // truncated sequence: skipping would step past the NUL
+      p += 2;                // skip the 3-byte General Punctuation codepoint
     } else {
       return true;
     }
@@ -196,8 +197,7 @@ bool DictionaryWordSelectActivity::drawHighlightWithSnapshot() {
   int hy = word.y - 2;
   int hw = word.width + 4;
   int hh = lineHeight + 4;
-  // Clamp to the panel: read/write take unsigned coordinates, and using the
-  // same clamped box for save, draw and restore keeps them consistent.
+  // Clamp to the panel so save, draw and restore all use the same box.
   if (hx < 0) {
     hw += hx;
     hx = 0;

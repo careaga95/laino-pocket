@@ -41,6 +41,15 @@ bool findStem(const char* folderPath, std::string& stemOut) {
   }
 
   if (foundStem[0] == '\0') return false;
+
+  // Require dictionary data next to the index, so folders holding only an
+  // .idx never surface as selectable dictionaries that fail at lookup time.
+  const std::string base = std::string(folderPath) + "/" + foundStem;
+  if (!Storage.exists((base + ".dict").c_str()) && !Storage.exists((base + ".dict.dz").c_str())) {
+    LOG_DBG("DREG", "Skipping %s: no .dict or .dict.dz", folderPath);
+    return false;
+  }
+
   stemOut = foundStem;
   return true;
 }
@@ -82,6 +91,9 @@ void discover(std::vector<DictionaryEntry>& out) {
 
 bool resolveBasePath(const char* folderName, std::string& basePathOut) {
   if (!folderName || folderName[0] == '\0') return false;
+  // folderName is persisted in the settings JSON: reject separators and dot
+  // prefixes so a crafted value cannot escape /dictionaries/.
+  if (folderName[0] == '.' || strpbrk(folderName, "/\\") != nullptr) return false;
   std::string folderPath = std::string(DICT_ROOT) + "/" + folderName;
   std::string stem;
   if (!findStem(folderPath.c_str(), stem)) return false;

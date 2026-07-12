@@ -100,6 +100,11 @@ void DictionaryDefinitionActivity::wrapText() {
            i - tokenStart < MAX_LINE_BYTES) {
       i++;
     }
+    // If the byte cap cut the token mid-UTF-8-sequence, back off to the last
+    // complete codepoint so measure/draw never see a partial sequence. A
+    // natural stop lands on whitespace or the terminating NUL, never on a
+    // continuation byte, so this is a no-op there.
+    while (i - tokenStart > 1 && (text[i] & 0xC0) == 0x80) i--;
     const uint32_t tokenLen = i - tokenStart;
     const int tokenWidth = measureSpan(fontId, text + tokenStart, tokenLen);
 
@@ -129,7 +134,12 @@ void DictionaryDefinitionActivity::wrapText() {
           lastFit = f;
         }
       }
-      if (lastFit == 0) lastFit = 1;  // guarantee progress even for a giant single glyph
+      if (lastFit == 0) {
+        // Even a single over-wide glyph must make progress; consume its whole
+        // UTF-8 sequence rather than splitting it into invalid fragments.
+        lastFit = 1;
+        while (lastFit < len && (text[lineStart + lastFit] & 0xC0) == 0x80) lastFit++;
+      }
       const uint32_t rest = lineStart + lastFit;
       lineEnd = rest;
       flushLine(rest);

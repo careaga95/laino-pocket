@@ -146,6 +146,11 @@ bool extractEntry(const char* path, uint32_t offset, uint32_t size, HalFile& out
   Info info;
   if (!parse(file, &info)) return false;
 
+  // Reject ranges outside the uncompressed data (offset/size come from the
+  // untrusted .idx). Subtraction form avoids uint32 overflow in offset + size
+  // and guarantees localOffset < chunkOutSize in the loop below.
+  if (offset > info.totalSize || size > info.totalSize - offset) return false;
+
   const uint32_t startChunk = offset / info.chunkLength;
   const uint32_t endChunk = (offset + size - 1) / info.chunkLength;
   if (endChunk + 1 >= info.chunkOffsets.size()) return false;

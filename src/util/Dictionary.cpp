@@ -124,30 +124,45 @@ bool Dictionary::buildIndex(void (*yieldFn)(void*), void* ctx) {
     return false;
   }
 
-  std::vector<uint32_t> samples;
-  // Average .idx entry is ~20 bytes (headword + NUL + 8-byte suffix);
-  // reserve generously to avoid regrowth during the scan.
-  samples.reserve(idxSize / (SAMPLE_INTERVAL * 12) + 4);
-  samples.push_back(0);  // entry 0 always starts at byte 0
+  // Stream each sample offset straight to the sidecar instead of accumulating
+  // them in RAM: a large .idx would otherwise cost tens of KB of vector heap,
+  // and vector growth aborts on OOM under -fno-exceptions. The header slot is
+  // zero-filled until the scan succeeds, so an interrupted build leaves a file
+  // readQidxHeader rejects (magic mismatch) and needsIndex() triggers a rebuild.
+  const std::string qidxPath = basePath + ".qidx";
+  HalFile out;
+  if (!Storage.openFileForWrite("DICT", qidxPath, out)) return false;
+  const auto writeU32 = [&out](uint32_t v) { return out.write(&v, sizeof(v)) == static_cast<int>(sizeof(v)); };
+  const uint32_t placeholder[5] = {};
+  bool ok = out.write(placeholder, sizeof(placeholder)) == sizeof(placeholder);
+  uint32_t sampleCount = 0;
+  if (ok) {
+    ok = writeU32(0);  // entry 0 always starts at byte 0
+    sampleCount = 1;
+  }
 
   const unsigned long startMs = millis();
   uint32_t entryCount = 0;
   uint32_t pos = 0;
   uint32_t suffixLeft = 0;  // 0 while scanning a headword, else suffix bytes remaining
   uint32_t sinceYield = 0;
-  while (pos < idxSize) {
+  while (ok && pos < idxSize) {
     const int n = idx.read(buf.get(), CHUNK_BYTES);
     if (n <= 0) {
       LOG_ERR("DICT", "Index scan read failed at %lu", static_cast<unsigned long>(pos));
-      return false;
+      ok = false;
+      break;
     }
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; ok && i < n; i++) {
       if (suffixLeft == 0) {
         if (buf[i] == 0) suffixLeft = 8;
       } else if (--suffixLeft == 0) {
         entryCount++;
         const uint32_t nextEntryStart = pos + i + 1;
-        if (entryCount % SAMPLE_INTERVAL == 0 && nextEntryStart < idxSize) samples.push_back(nextEntryStart);
+        if (entryCount % SAMPLE_INTERVAL == 0 && nextEntryStart < idxSize) {
+          ok = writeU32(nextEntryStart);
+          sampleCount++;
+        }
       }
     }
     pos += n;
@@ -158,20 +173,20 @@ bool Dictionary::buildIndex(void (*yieldFn)(void*), void* ctx) {
     }
   }
 
-  HalFile out;
-  if (!Storage.openFileForWrite("DICT", basePath + ".qidx", out)) return false;
-  const uint32_t header[5] = {QIDX_MAGIC, QIDX_VERSION, SAMPLE_INTERVAL, static_cast<uint32_t>(samples.size()),
-                              idxSize};
-  if (out.write(header, sizeof(header)) != sizeof(header) ||
-      out.write(samples.data(), samples.size() * sizeof(uint32_t)) != samples.size() * sizeof(uint32_t)) {
-    LOG_ERR("DICT", "Failed to write %s.qidx", basePath.c_str());
+  if (ok) {
+    // Backpatch the now-valid header over the placeholder.
+    const uint32_t header[5] = {QIDX_MAGIC, QIDX_VERSION, SAMPLE_INTERVAL, sampleCount, idxSize};
+    ok = out.seekSet(0) && out.write(header, sizeof(header)) == sizeof(header);
+  }
+  if (!ok) {
+    LOG_ERR("DICT", "Index build failed, removing %s", qidxPath.c_str());
     out.close();  // close before remove of the same path
-    Storage.remove((basePath + ".qidx").c_str());
+    Storage.remove(qidxPath.c_str());
     return false;
   }
 
-  LOG_INF("DICT", "Indexed %lu entries (%u samples) in %lu ms", static_cast<unsigned long>(entryCount),
-          static_cast<unsigned>(samples.size()), millis() - startMs);
+  LOG_INF("DICT", "Indexed %lu entries (%lu samples) in %lu ms", static_cast<unsigned long>(entryCount),
+          static_cast<unsigned long>(sampleCount), millis() - startMs);
   return true;
 }
 
