@@ -40,6 +40,7 @@ class DictionaryWordSelectActivity final : public Activity {
   enum class Popup : uint8_t { None, Busy, NotFound, Error };
 
   void extractWords();
+  int closestInRow(uint16_t row, int centerX) const;
   void moveVertical(int direction);
   void performLookup();
   bool drawHighlightWithSnapshot();

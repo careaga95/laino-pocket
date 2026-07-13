@@ -48,6 +48,12 @@ void DictionaryWordSelectActivity::onEnter() {
   // full-repaint path as the fallback.
   snapshot = makeUniqueNoThrow<uint8_t[]>(SNAPSHOT_CAPACITY);
   extractWords();
+  // Start on the middle row's word nearest mid-screen instead of top-left:
+  // any word on the page is then at most half a page of moves away.
+  if (!words.empty()) {
+    const int initial = closestInRow(rowCount / 2, renderer.getScreenWidth() / 2);
+    if (initial >= 0) selected = initial;
+  }
   requestUpdate();
 }
 
@@ -100,22 +106,28 @@ void DictionaryWordSelectActivity::extractWords() {
   }
 }
 
-void DictionaryWordSelectActivity::moveVertical(const int direction) {
-  const WordBox& current = words[selected];
-  const int targetRow = static_cast<int>(current.row) + direction;
-  if (targetRow < 0 || targetRow >= static_cast<int>(rowCount)) return;
-
-  const int currentCenter = current.x + current.width / 2;
+// Index of the word in `row` whose horizontal center is closest to centerX;
+// -1 when the row has no words.
+int DictionaryWordSelectActivity::closestInRow(const uint16_t row, const int centerX) const {
   int best = -1;
   int bestDistance = INT_MAX;
   for (int i = 0; i < static_cast<int>(words.size()); i++) {
-    if (words[i].row != static_cast<uint16_t>(targetRow)) continue;
-    const int distance = std::abs(words[i].x + words[i].width / 2 - currentCenter);
+    if (words[i].row != row) continue;
+    const int distance = std::abs(words[i].x + words[i].width / 2 - centerX);
     if (distance < bestDistance) {
       bestDistance = distance;
       best = i;
     }
   }
+  return best;
+}
+
+void DictionaryWordSelectActivity::moveVertical(const int direction) {
+  const WordBox& current = words[selected];
+  const int targetRow = static_cast<int>(current.row) + direction;
+  if (targetRow < 0 || targetRow >= static_cast<int>(rowCount)) return;
+
+  const int best = closestInRow(static_cast<uint16_t>(targetRow), current.x + current.width / 2);
   if (best >= 0 && best != selected) {
     selected = best;
     requestUpdate();
