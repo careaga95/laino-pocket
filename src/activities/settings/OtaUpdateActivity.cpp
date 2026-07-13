@@ -168,87 +168,64 @@ void OtaUpdateActivity::render(RenderLock&&) {
   renderer.displayBuffer();
 }
 
+void OtaUpdateActivity::runUpdateInstall() {
+  LOG_DBG("OTA", "New update available, starting download...");
+  {
+    RenderLock lock(*this);
+    state = UPDATE_IN_PROGRESS;
+  }
+  requestUpdateAndWait();
+  const auto res = updater.installUpdate(
+      [](void* ctx) {
+        // immediate=true notifies the render task directly. The default deferred path only
+        // sets a flag consumed at the end of ActivityManager::loop(), which never runs while
+        // installUpdate() blocks this task.
+        static_cast<OtaUpdateActivity*>(ctx)->requestUpdate(true);
+      },
+      this);
+
+  if (res != OtaUpdater::OK) {
+    LOG_DBG("OTA", "Update failed: %d", res);
+    {
+      RenderLock lock(*this);
+      state = FAILED;
+    }
+    requestUpdate();
+    return;
+  }
+
+  {
+    RenderLock lock(*this);
+    state = FINISHED;
+  }
+  requestUpdateAndWait();
+  // Hold the completion screen briefly so the user sees it, then restart.
+  delay(3000);
+  {
+    RenderLock lock(*this);
+    state = SHUTTING_DOWN;
+  }
+}
+
 void OtaUpdateActivity::loop() {
   if (state == WAITING_CONFIRMATION) {
     int x = 0;
     int y = 0;
     if (mappedInput.wasScreenTapped(x, y)) {
       const auto actionRects = getOtaActionRects(renderer);
-      if (contains(actionRects.cancel, x, y) || contains(actionRects.update, x, y)) {
-        if (contains(actionRects.cancel, x, y)) {
-          finish();
-          return;
-        }
-        LOG_DBG("OTA", "New update available, starting download from touch confirm...");
-        {
-          RenderLock lock(*this);
-          state = UPDATE_IN_PROGRESS;
-        }
-        requestUpdateAndWait();
-        const auto res =
-            updater.installUpdate([](void* ctx) { static_cast<OtaUpdateActivity*>(ctx)->requestUpdate(true); }, this);
-
-        if (res != OtaUpdater::OK) {
-          LOG_DBG("OTA", "Update failed: %d", res);
-          {
-            RenderLock lock(*this);
-            state = FAILED;
-          }
-          requestUpdate();
-          return;
-        }
-
-        {
-          RenderLock lock(*this);
-          state = FINISHED;
-        }
-        requestUpdateAndWait();
-        delay(3000);
-        {
-          RenderLock lock(*this);
-          state = SHUTTING_DOWN;
-        }
+      if (contains(actionRects.cancel, x, y)) {
+        finish();
+        return;
+      }
+      if (contains(actionRects.update, x, y)) {
+        runUpdateInstall();
         return;
       }
     }
 
     if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-      LOG_DBG("OTA", "New update available, starting download...");
-      {
-        RenderLock lock(*this);
-        state = UPDATE_IN_PROGRESS;
-      }
-      requestUpdateAndWait();
-      const auto res = updater.installUpdate(
-          [](void* ctx) {
-            // immediate=true notifies the render task directly. The default deferred path only
-            // sets a flag consumed at the end of ActivityManager::loop(), which never runs while
-            // installUpdate() blocks this task.
-            static_cast<OtaUpdateActivity*>(ctx)->requestUpdate(true);
-          },
-          this);
-
-      if (res != OtaUpdater::OK) {
-        LOG_DBG("OTA", "Update failed: %d", res);
-        {
-          RenderLock lock(*this);
-          state = FAILED;
-        }
-        requestUpdate();
-        return;
-      }
-
-      {
-        RenderLock lock(*this);
-        state = FINISHED;
-      }
-      requestUpdateAndWait();
-      // Hold the completion screen briefly so the user sees it, then restart.
-      delay(3000);
-      {
-        RenderLock lock(*this);
-        state = SHUTTING_DOWN;
-      }
+      runUpdateInstall();
+      return;
     }
 
     if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
