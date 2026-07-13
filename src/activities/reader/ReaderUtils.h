@@ -69,6 +69,20 @@ inline void displayWithRefreshCycle(const GfxRenderer& renderer, int& pagesUntil
   }
 }
 
+// Async variant: starts the refresh and returns so the caller can overlap CPU
+// work with the panel's refresh time. Caller must not touch the framebuffer
+// until renderer.waitRefreshComplete() and must rebuild the differential
+// baseline before the next page turn (the tiled grayscale cleanup does).
+inline void displayWithRefreshCycleAsync(const GfxRenderer& renderer, int& pagesUntilFullRefresh) {
+  if (pagesUntilFullRefresh <= 1) {
+    renderer.displayBufferAsync(HalDisplay::HALF_REFRESH);
+    pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
+  } else {
+    renderer.displayBufferAsync();
+    pagesUntilFullRefresh--;
+  }
+}
+
 // Grayscale anti-aliasing pass. Renders content twice (LSB + MSB) to build
 // the grayscale buffer. Only the content callback is re-rendered — status bars
 // and other overlays should be drawn before calling this.
