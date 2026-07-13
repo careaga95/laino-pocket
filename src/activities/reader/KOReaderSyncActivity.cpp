@@ -206,6 +206,22 @@ void KOReaderSyncActivity::performUpload() {
   progress.progress = localProgress.xpath;
   progress.percentage = localProgress.percentage;
 
+  // Rich CrossPoint position for crosspoint-sync servers (lossless
+  // CrossPoint<->CrossPoint sync); plain kosync servers ignore the extra field.
+  {
+    KOReaderRichPosition pos;
+    const float pct = localProgress.percentage < 0.0f   ? 0.0f
+                      : localProgress.percentage > 1.0f ? 1.0f
+                                                        : localProgress.percentage;
+    pos.pctQ = static_cast<uint32_t>(pct * 1000000.0f + 0.5f);
+    pos.spineIndex = static_cast<uint16_t>(currentSpineIndex);
+    pos.pageNumber = static_cast<uint16_t>(currentPage);
+    pos.totalPages = static_cast<uint16_t>(totalPagesInSpine > 0 ? totalPagesInSpine : 1);
+    pos.paragraphIndex = currentParagraphIndex;
+    pos.xpath = localProgress.xpath;
+    progress.position = std::move(pos);
+  }
+
   // Optionally include document metadata (KOReader PR #15306)
   if (KOREADER_STORE.getSendMetadata()) {
     KOReaderMetadata meta;
