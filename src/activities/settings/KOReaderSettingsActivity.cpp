@@ -14,9 +14,8 @@
 
 namespace {
 constexpr int MENU_ITEMS = 7;
-const StrId menuNames[MENU_ITEMS] = {StrId::STR_USERNAME,      StrId::STR_PASSWORD,
-                                     StrId::STR_SYNC_SERVER_URL, StrId::STR_DOCUMENT_MATCHING,
-                                     StrId::STR_SEND_METADATA,   StrId::STR_SIGN_UP,
+const StrId menuNames[MENU_ITEMS] = {StrId::STR_USERNAME,          StrId::STR_PASSWORD,      StrId::STR_SYNC_SERVER_URL,
+                                     StrId::STR_DOCUMENT_MATCHING, StrId::STR_SEND_METADATA, StrId::STR_SIGN_UP,
                                      StrId::STR_AUTHENTICATE};
 }  // namespace
 

@@ -34,8 +34,7 @@ void KOReaderAuthActivity::onWifiSelectionComplete(const bool success) {
 }
 
 void KOReaderAuthActivity::performAuthentication() {
-  const auto result =
-      mode == Mode::SIGN_UP ? KOReaderSyncClient::createUser() : KOReaderSyncClient::authenticate();
+  const auto result = mode == Mode::SIGN_UP ? KOReaderSyncClient::createUser() : KOReaderSyncClient::authenticate();
 
   {
     RenderLock lock(*this);
@@ -44,8 +43,8 @@ void KOReaderAuthActivity::performAuthentication() {
       statusMessage = mode == Mode::SIGN_UP ? tr(STR_ACCOUNT_CREATED) : tr(STR_AUTH_SUCCESS);
     } else {
       state = FAILED;
-      errorMessage = result == KOReaderSyncClient::USER_EXISTS ? tr(STR_USERNAME_TAKEN)
-                                                               : KOReaderSyncClient::errorString(result);
+      errorMessage =
+          result == KOReaderSyncClient::USER_EXISTS ? tr(STR_USERNAME_TAKEN) : KOReaderSyncClient::errorString(result);
     }
   }
   requestUpdate();
@@ -95,9 +94,8 @@ void KOReaderAuthActivity::render(RenderLock&&) {
                               EpdFontFamily::BOLD);
     renderer.drawCenteredText(UI_10_FONT_ID, top + height + 10, tr(STR_SYNC_READY));
   } else if (state == FAILED) {
-    renderer.drawCenteredText(UI_10_FONT_ID, top,
-                              mode == Mode::SIGN_UP ? tr(STR_SIGNUP_FAILED) : tr(STR_AUTH_FAILED), true,
-                              EpdFontFamily::BOLD);
+    renderer.drawCenteredText(UI_10_FONT_ID, top, mode == Mode::SIGN_UP ? tr(STR_SIGNUP_FAILED) : tr(STR_AUTH_FAILED),
+                              true, EpdFontFamily::BOLD);
     renderer.drawCenteredText(UI_10_FONT_ID, top + height + 10, errorMessage.c_str());
   }
 

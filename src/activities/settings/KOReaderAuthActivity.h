@@ -13,8 +13,7 @@ class KOReaderAuthActivity final : public Activity {
  public:
   enum class Mode { AUTHENTICATE, SIGN_UP };
 
-  explicit KOReaderAuthActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                Mode mode = Mode::AUTHENTICATE)
+  explicit KOReaderAuthActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, Mode mode = Mode::AUTHENTICATE)
       : Activity("KOReaderAuth", renderer, mappedInput), mode(mode) {}
 
   void onEnter() override;
