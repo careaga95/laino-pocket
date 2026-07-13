@@ -51,26 +51,20 @@ void EpubReaderFootnotesActivity::loop() {
     constexpr int lineHeight = 36;
     const int listTop = 60 + contentY;
     const int visibleCount = std::max(1, (renderer.getScreenHeight() - listTop) / lineHeight);
-    int tx = 0;
-    int ty = 0;
-    if (mappedInput.wasScreenTouchDown(tx, ty) && tx >= contentX && tx < contentX + contentWidth && ty >= listTop) {
-      const int row = (ty - listTop) / lineHeight;
+    int row = -1;
+    const auto touch = mappedInput.rowTouch(row, listTop, lineHeight, visibleCount, contentX, contentX + contentWidth);
+    if (touch != MappedInputManager::RowTouch::None) {
       const int touched = scrollOffset + row;
-      if (row >= 0 && row < visibleCount && touched >= 0 && touched < static_cast<int>(footnotes.size())) {
-        if (selectedIndex != touched) {
+      if (touched >= 0 && touched < static_cast<int>(footnotes.size())) {
+        if (touch == MappedInputManager::RowTouch::Down) {
+          if (selectedIndex != touched) {
+            selectedIndex = touched;
+            requestUpdate();
+          }
+        } else {
           selectedIndex = touched;
-          requestUpdate();
+          selectFootnote();
         }
-        return;
-      }
-    }
-
-    if (mappedInput.wasScreenTapped(tx, ty) && tx >= contentX && tx < contentX + contentWidth && ty >= listTop) {
-      const int row = (ty - listTop) / lineHeight;
-      const int tapped = scrollOffset + row;
-      if (row >= 0 && row < visibleCount && tapped >= 0 && tapped < static_cast<int>(footnotes.size())) {
-        selectedIndex = tapped;
-        selectFootnote();
         return;
       }
     }

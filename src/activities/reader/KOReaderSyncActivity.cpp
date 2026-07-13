@@ -405,37 +405,25 @@ void KOReaderSyncActivity::loop() {
       }
     };
 
-    auto optionFromPoint = [this](int y, int& option) {
+    {
       const auto& metrics = UITheme::getInstance().getMetrics();
-      Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+      const Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
       const int top = screen.y + metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-      const int optionY = top + 230;
-      const int optionHeight = 30;
-      if (y >= optionY - 2 && y < optionY - 2 + optionHeight) {
-        option = 0;
-        return true;
+      constexpr int optionHeight = 30;
+      int touchedOption = -1;
+      const auto touch = mappedInput.rowTouch(touchedOption, top + 230 - 2, optionHeight, 2);
+      if (touch == MappedInputManager::RowTouch::Down) {
+        if (selectedOption != touchedOption) {
+          selectedOption = touchedOption;
+          requestUpdate();
+        }
+        return;
       }
-      if (y >= optionY + optionHeight - 2 && y < optionY + optionHeight - 2 + optionHeight) {
-        option = 1;
-        return true;
-      }
-      return false;
-    };
-
-    int tx = 0;
-    int ty = 0;
-    int touchedOption = -1;
-    if (mappedInput.wasScreenTouchDown(tx, ty) && optionFromPoint(ty, touchedOption)) {
-      if (selectedOption != touchedOption) {
+      if (touch == MappedInputManager::RowTouch::Tap) {
         selectedOption = touchedOption;
-        requestUpdate();
+        chooseSelected();
+        return;
       }
-      return;
-    }
-    if (mappedInput.wasScreenTapped(tx, ty) && optionFromPoint(ty, touchedOption)) {
-      selectedOption = touchedOption;
-      chooseSelected();
-      return;
     }
 
     // Navigate options

@@ -132,29 +132,22 @@ void OpdsBookBrowserActivity::loop() {
     }
 
     if (!entries.empty()) {
-      auto entryFromPoint = [&](int y, int& index) {
-        constexpr int listTop = 60;
-        constexpr int rowHeight = 30;
-        if (y < listTop) return false;
-        const int row = (y - listTop) / rowHeight;
-        const int pageStart = selectorIndex / PAGE_ITEMS * PAGE_ITEMS;
-        const int touched = pageStart + row;
-        if (row < 0 || row >= PAGE_ITEMS || touched < 0 || touched >= static_cast<int>(entries.size())) return false;
-        index = touched;
-        return true;
-      };
-      int touched = -1;
-      if (mappedInput.wasScreenTouchDown(tx, ty) && entryFromPoint(ty, touched)) {
-        if (selectorIndex != touched) {
-          selectorIndex = touched;
-          requestUpdate();
+      int row = -1;
+      const auto touch = mappedInput.rowTouch(row, /*top=*/60, /*rowStep=*/30, PAGE_ITEMS);
+      if (touch != MappedInputManager::RowTouch::None) {
+        const int touched = selectorIndex / PAGE_ITEMS * PAGE_ITEMS + row;
+        if (touched >= 0 && touched < static_cast<int>(entries.size())) {
+          if (touch == MappedInputManager::RowTouch::Down) {
+            if (selectorIndex != touched) {
+              selectorIndex = touched;
+              requestUpdate();
+            }
+          } else {
+            selectorIndex = touched;
+            activateSelected();
+          }
+          return;
         }
-        return;
-      }
-      if (mappedInput.wasScreenTapped(tx, ty) && entryFromPoint(ty, touched)) {
-        selectorIndex = touched;
-        activateSelected();
-        return;
       }
 
       const auto swipe = mappedInput.wasSwipe();

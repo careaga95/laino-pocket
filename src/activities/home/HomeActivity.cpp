@@ -238,36 +238,26 @@ void HomeActivity::loop() {
   }
 
   const int menuTop = metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset;
-  const int menuHeight =
-      renderer.getScreenHeight() - (metrics.headerHeight + metrics.homeTopPadding + metrics.verticalSpacing +
-                                    metrics.homeMenuTopOffset + metrics.buttonHintsHeight);
   const int renderedMenuSelection =
       metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size();
   const int renderedMenuCount =
       menuCount - (metrics.homeContinueReadingInMenu ? 0 : static_cast<int>(recentBooks.size()));
-  if (mappedInput.wasScreenTouchDown(tx, ty) && ty >= menuTop && ty < menuTop + menuHeight) {
-    const int rowStep = metrics.menuRowHeight + metrics.menuSpacing;
-    const int touchedMenu = rowStep > 0 ? (ty - menuTop) / rowStep : -1;
-    if (touchedMenu >= 0 && touchedMenu < renderedMenuCount && (ty - menuTop) % rowStep < metrics.menuRowHeight) {
-      const int touchedIndex =
-          metrics.homeContinueReadingInMenu ? touchedMenu : touchedMenu + static_cast<int>(recentBooks.size());
+  int menuRow = -1;
+  const auto menuTouch = mappedInput.rowTouch(menuRow, menuTop, metrics.menuRowHeight + metrics.menuSpacing,
+                                              renderedMenuCount, 0, INT32_MAX, metrics.menuRowHeight);
+  if (menuTouch != MappedInputManager::RowTouch::None) {
+    const int touchedIndex =
+        metrics.homeContinueReadingInMenu ? menuRow : menuRow + static_cast<int>(recentBooks.size());
+    if (menuTouch == MappedInputManager::RowTouch::Down) {
       if (selectorIndex != touchedIndex) {
         selectorIndex = touchedIndex;
         requestUpdate();
       }
-      return;
-    }
-  }
-
-  if (mappedInput.wasScreenTapped(tx, ty) && ty >= menuTop && ty < menuTop + menuHeight) {
-    const int rowStep = metrics.menuRowHeight + metrics.menuSpacing;
-    const int tappedMenu = rowStep > 0 ? (ty - menuTop) / rowStep : -1;
-    if (tappedMenu >= 0 && tappedMenu < renderedMenuCount && (ty - menuTop) % rowStep < metrics.menuRowHeight) {
-      selectorIndex =
-          metrics.homeContinueReadingInMenu ? tappedMenu : tappedMenu + static_cast<int>(recentBooks.size());
+    } else {
+      selectorIndex = touchedIndex;
       activateSelection();
-      return;
     }
+    return;
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {

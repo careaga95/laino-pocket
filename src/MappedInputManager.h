@@ -31,6 +31,19 @@ class MappedInputManager {
                          bool hasSubtitle) const;
   bool wasListItemTouchedDown(int& index, int itemCount, int selectedIndex, int listTop, int listHeight,
                               bool hasSubtitle) const;
+
+  // Combined touch interaction for a band of equal rows with caller-supplied
+  // geometry — the shared hit-test for lists the theme helpers above do not
+  // cover (custom row heights, option prompts, menus). Down = a held
+  // tap-candidate is on a row (update the selection highlight); Tap = a tap
+  // released on one (activate). rowHeight limits the hit to the top rowHeight
+  // px of each step (0 = the full step, no gap band).
+  enum class RowTouch : uint8_t { None, Down, Tap };
+  RowTouch rowTouch(int& row, int top, int rowStep, int rowCount, int xStart = 0, int xEnd = INT32_MAX,
+                    int rowHeight = 0) const;
+  // Horizontal variant for side-by-side button pairs (confirmation prompts).
+  RowTouch colTouch(int& col, int left, int colStep, int colCount, int yStart, int yEnd, int colWidth = 0) const;
+
   SwipeDir wasSwipe() const;
   bool wasHomeGesture() const;
   bool wasMenuGesture() const;

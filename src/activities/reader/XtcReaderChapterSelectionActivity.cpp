@@ -81,28 +81,20 @@ void XtcReaderChapterSelectionActivity::loop() {
   const int contentWidth = renderer.getScreenWidth() - hintGutterWidth;
   const int contentY = isPortraitInverted ? 50 : 0;
   const int listTop = 60 + contentY;
-  int tx = 0;
-  int ty = 0;
-  if (mappedInput.wasScreenTouchDown(tx, ty) && tx >= contentX && tx < contentX + contentWidth && ty >= listTop) {
-    const int row = (ty - listTop) / 30;
-    const int pageStartIndex = selectorIndex / pageItems * pageItems;
-    const int touched = pageStartIndex + row;
-    if (row >= 0 && row < pageItems && touched >= 0 && touched < totalItems) {
-      if (selectorIndex != touched) {
+  int row = -1;
+  const auto touch = mappedInput.rowTouch(row, listTop, 30, pageItems, contentX, contentX + contentWidth);
+  if (touch != MappedInputManager::RowTouch::None) {
+    const int touched = selectorIndex / pageItems * pageItems + row;
+    if (touched >= 0 && touched < totalItems) {
+      if (touch == MappedInputManager::RowTouch::Down) {
+        if (selectorIndex != touched) {
+          selectorIndex = touched;
+          requestUpdate();
+        }
+      } else {
         selectorIndex = touched;
-        requestUpdate();
+        selectChapter();
       }
-      return;
-    }
-  }
-
-  if (mappedInput.wasScreenTapped(tx, ty) && tx >= contentX && tx < contentX + contentWidth && ty >= listTop) {
-    const int row = (ty - listTop) / 30;
-    const int pageStartIndex = selectorIndex / pageItems * pageItems;
-    const int tapped = pageStartIndex + row;
-    if (row >= 0 && row < pageItems && tapped >= 0 && tapped < totalItems) {
-      selectorIndex = tapped;
-      selectChapter();
       return;
     }
   }
