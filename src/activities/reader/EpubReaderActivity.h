@@ -46,6 +46,13 @@ class EpubReaderActivity final : public Activity {
   // to the chapter/book title the moment the connection completes (and
   // returns on disconnect) instead of waiting for the next page turn.
   bool statusBarBleConnected = false;
+  // Idle-time glyph prewarm: after a page settles, scan the LIKELY next page
+  // (scan mode draws nothing) and load its missing glyphs from SD during idle,
+  // so the next turn's in-render prewarm is a cache hit instead of ~100 ms of
+  // SD reads on the page-turn critical path. One attempt per position.
+  int idlePrewarmSpine = -1;
+  int idlePrewarmPage = -1;
+  unsigned long lastRenderCompleteMs = 0;
   bool bookmarkRemoved = false;  // true when last toggle removed (controls popup text)
   std::vector<BookmarkEntry> cachedBookmarks;
   // Tracks whether this book is currently removed from Recent Books by the
