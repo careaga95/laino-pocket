@@ -11,6 +11,8 @@
 #include "fontIds.h"
 #include "network/OtaUpdater.h"
 
+#include "BleInput.h"
+
 void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
   if (!success) {
     LOG_ERR("OTA", "WiFi connection failed, exiting");
@@ -56,6 +58,12 @@ void OtaUpdateActivity::onEnter() {
 
   // Turn on WiFi immediately
   LOG_DBG("OTA", "Turning on WiFi...");
+  // Free the BLE stack BEFORE bringing WiFi up (matches WifiSelectionActivity):
+  // the C3 shares one radio and heap between the stacks, and the WiFi driver
+  // sizes its RX/TX buffer pools at init — initializing it with NimBLE's ~50 KB
+  // still resident leaves WiFi permanently starved even after the lifecycle
+  // stops BLE a loop later. No-op when BLE is already off.
+  bleinput::stop();
   WiFi.mode(WIFI_STA);
 
   // Launch WiFi selection subactivity
