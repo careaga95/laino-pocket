@@ -67,6 +67,7 @@ class CssParser {
    */
   [[nodiscard]] static CssStyle parseInlineStyle(std::string_view styleValue);
 
+  // MEMFIX-PORT: stylesheet resident-bytes audit accessor; portable
   // Approximate resident heap of the parsed stylesheet, for the audit log.
   // unordered_map cost model: bucket array + one node per rule (libstdc++ node
   // overhead ~= 2 pointers + hash) + key string capacity when it exceeds SSO.

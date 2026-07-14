@@ -34,6 +34,8 @@
 #include "images/LoadingIcon.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
+#include <Memory.h>
+#include "HeapMap.h"
 
 GfxRenderer renderer(display);
 MappedInputManager mappedInputManager(gpio, renderer);
@@ -596,6 +598,23 @@ void loop() {
     LOG_INF("MEM", "Free: %d bytes, Total: %d bytes, Min Free: %d bytes, MaxAlloc: %d bytes", ESP.getFreeHeap(),
             ESP.getHeapSize(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap());
     lastMemPrint = millis();
+    // MEMFIX-PORT: per-task stack high-water audit; portable
+    // Task stack audit (~once/min): name, stack base (matches blocks in the
+    // heap map), and high-water free bytes — the margin available for
+    // right-sizing each stack. TRACE_FACILITY is on in this sdkconfig.
+    static uint8_t memPrintCount = 0;
+    if (++memPrintCount >= 6) {
+      memPrintCount = 0;
+      const UBaseType_t taskCount = uxTaskGetNumberOfTasks();
+      auto taskStatus = makeUniqueNoThrow<TaskStatus_t[]>(taskCount + 2);
+      if (taskStatus) {
+        const UBaseType_t got = uxTaskGetSystemState(taskStatus.get(), taskCount + 2, nullptr);
+        for (UBaseType_t i = 0; i < got; ++i) {
+          LOG_DBG("MEM", "task %-20s stackBase=%p highWaterFree=%u", taskStatus[i].pcTaskName,
+                  taskStatus[i].pxStackBase, (unsigned)taskStatus[i].usStackHighWaterMark);
+        }
+      }
+    }
   }
 
   // Handle incoming serial commands,
@@ -611,6 +630,11 @@ void loop() {
         uint8_t* buf = display.getFrameBuffer();
         logSerial.write(buf, bufferSize);
         logSerial.printf("SCREENSHOT_END\n");
+      // MEMFIX-PORT: on-demand heap map serial command; portable
+      } else if (cmd == "MEMMAP") {
+        // On-demand heap block map: capture the heap exactly when it looks
+        // interesting (e.g. maxAlloc degraded mid-session) without a reboot.
+        heapmap::dump();
       }
     }
   }

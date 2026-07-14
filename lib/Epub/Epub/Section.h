@@ -132,6 +132,7 @@ class Section {
   // (covers finalized sections and partials from a previous session).
   std::optional<uint16_t> findAnchor(const std::string& anchor) const;
 
+  // MEMFIX-PORT: section resident-bytes audit accessor; portable
   // Approximate resident heap for the audit log. Steady state (no build) a
   // Section holds little beyond itself; during a build the page LUT and path
   // strings dominate (the parser's internal footprint is not walked here).

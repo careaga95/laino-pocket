@@ -104,6 +104,7 @@ class SdCardFont {
     uint32_t uniqueGlyphs = 0;
     uint32_t bitmapBytes = 0;
   };
+  // MEMFIX-PORT: SD font resident-bytes audit; portable
   // Log per-style resident heap (full tables + kept-if-fits mini arenas +
   // advance tables + overflow bitmaps) and return the total in bytes. Pure
   // accounting — no allocation, no state change.

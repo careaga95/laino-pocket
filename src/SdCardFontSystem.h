@@ -32,6 +32,7 @@ class SdCardFontSystem {
   /// Non-const access to the registry (for FontInstaller).
   SdCardFontRegistry& registry() { return registry_; }
 
+  // MEMFIX-PORT: font system audit passthrough; portable
   /// Resident heap held by loaded SD fonts (audit; see SdCardFont::reportMemory).
   size_t reportFontMemory() const { return manager_.reportMemory(); }
 

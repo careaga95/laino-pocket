@@ -44,6 +44,7 @@ class Epub {
   }
   ~Epub() = default;
   std::string& getBasePath() { return contentBasePath; }
+  // MEMFIX-PORT: epub resident-bytes audit accessor; portable
   // Approximate resident heap of the open book (audit): path strings, the CSS
   // file list, and the parsed stylesheet. BookMetadataCache is file-backed
   // (counts + HalFile handles) and contributes little.

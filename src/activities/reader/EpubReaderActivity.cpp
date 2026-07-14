@@ -41,6 +41,7 @@
 #include "SdCardFontSystem.h"
 #include <esp_heap_caps.h>
 #include "rom/ets_sys.h"
+#include "HeapMap.h"
 
 namespace {
 // pagesPerRefresh now comes from SETTINGS.getRefreshFrequency()
@@ -69,45 +70,6 @@ bool isInReadFolder(const std::string& path) {
   constexpr size_t n = sizeof(READ_FOLDER) - 1;  // length of "/Read" (excludes NUL)
   return path.size() > n && path.compare(0, n, READ_FOLDER) == 0 && path[n] == '/';
 }
-
-// Heap block map capture. heap_caps_dump walks each heap inside a critical
-// section (interrupts masked), so its output can neither go through the
-// UART-0 ROM path we can't see nor be flow-controlled toward the CDC (the CDC
-// ring drains in an interrupt handler — waiting deadlocks into the interrupt
-// WDT, field-verified). Instead the ROM putc parses each line into a compact
-// record; the captured table is logged after the dump with interrupts live.
-namespace heapmap {
-struct BlockRec {
-  uint32_t addr;
-  uint32_t size;
-  bool free;
-};
-constexpr uint16_t kMaxRecs = 1400;
-BlockRec* recs = nullptr;  // borrowed buffer, valid only during capture
-uint16_t recCount = 0;
-bool overflowed = false;
-char line[96];
-uint8_t lineLen = 0;
-
-void putc(char c) {
-  if (c != '\n') {
-    if (lineLen < sizeof(line) - 1) line[lineLen++] = c;
-    return;
-  }
-  line[lineLen] = '\0';
-  lineLen = 0;
-  // e.g. "Block 0x3fcc69bc data, size: 89424 bytes, Free: Yes"
-  unsigned addr = 0, size = 0;
-  char freeWord[4] = {0};
-  if (sscanf(line, "Block 0x%x data, size: %u bytes, Free: %3s", &addr, &size, freeWord) == 3) {
-    if (recs && recCount < kMaxRecs) {
-      recs[recCount++] = {addr, size, freeWord[0] == 'Y'};
-    } else {
-      overflowed = true;
-    }
-  }
-}
-}  // namespace heapmap
 
 class FrameBufferBuildLoan {
  public:
@@ -1545,6 +1507,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     // preceding lines show (mini rebuilds, kern reloads, BLE churn).
     LOG_DBG("MEM", "post-render: free=%u maxAlloc=%u", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
     {
+      // MEMFIX-PORT: per-render heap owner audit + one-shot block map; portable
       // Heap audit: attribute resident heap to its owners so margin work is
       // measurement-driven. `other` = IDF/Arduino baseline + SdFat + epub
       // metadata + BLE (when on) + anything not yet instrumented.
@@ -1568,36 +1531,10 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       static bool heapMapDumped = false;
       if (!heapMapDumped && !(section && section->isBuilding())) {
         heapMapDumped = true;
-        auto recBuf = makeUniqueNoThrow<heapmap::BlockRec[]>(heapmap::kMaxRecs);
-        if (recBuf) {
-          heapmap::recs = recBuf.get();
-          heapmap::recCount = 0;
-          heapmap::overflowed = false;
-          heapmap::lineLen = 0;
-          // Capture (interrupts masked inside the dump): parse into records,
-          // never wait. Log the table afterward with the system live.
-          ets_install_putc1(&heapmap::putc);
-          heap_caps_dump(MALLOC_CAP_8BIT);
-          ets_install_uart_printf();
-          heapmap::recs = nullptr;
-
-          LOG_DBG("MEM", "---- heap block map: %u blocks%s ----", heapmap::recCount,
-                  heapmap::overflowed ? " (TRUNCATED)" : "");
-          uint32_t dustCount = 0, dustBytes = 0;
-          for (uint16_t i = 0; i < heapmap::recCount; ++i) {
-            const auto& r = recBuf[i];
-            if (r.free || r.size >= 256) {
-              LOG_DBG("MEM", "%s 0x%08x %u", r.free ? "FREE" : "used", r.addr, r.size);
-            } else {
-              dustCount++;
-              dustBytes += r.size;
-            }
-          }
-          LOG_DBG("MEM", "dust: %u used blocks < 256B totaling %u bytes", dustCount, dustBytes);
-          LOG_DBG("MEM", "---- end heap block map ----");
-        } else {
-          LOG_ERR("MEM", "heap map skipped: no room for capture buffer");
-        }
+        // Landmarks: known owners' addresses, so map blocks self-identify.
+        LOG_DBG("MEM", "landmark framebuffer=%p section=%p epub=%p activity=%p", renderer.getFrameBuffer(),
+                static_cast<void*>(section.get()), static_cast<void*>(epub.get()), static_cast<void*>(this));
+        heapmap::dump();
       }
     }
   }
