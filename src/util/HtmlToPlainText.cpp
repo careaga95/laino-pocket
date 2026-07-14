@@ -32,8 +32,8 @@ TagBreak tagBreak(const std::string& input, size_t start, size_t end) {
     return true;
   };
 
-  if (equals("p") || equals("h1") || equals("h2") || equals("h3") || equals("h4") || equals("h5") ||
-      equals("h6") || equals("hr")) {
+  if (equals("p") || equals("h1") || equals("h2") || equals("h3") || equals("h4") || equals("h5") || equals("h6") ||
+      equals("hr")) {
     return TagBreak::Paragraph;
   }
   if (equals("br") || equals("div") || equals("li") || equals("tr")) return TagBreak::Line;
