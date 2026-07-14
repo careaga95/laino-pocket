@@ -208,6 +208,8 @@ void EpubReaderActivity::onEnter() {
 
   ImageBlock::clearSessionRenderFailures();
 
+  statusBarBleConnected = BleHid.isConnected();
+
   // Configure screen orientation based on settings
   // NOTE: This affects layout math and must be applied before any render calls.
   ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
@@ -339,6 +341,19 @@ void EpubReaderActivity::loop() {
     // Should never happen
     finish();
     return;
+  }
+
+  // Swap the "BT connecting" status bar placeholder back to the chapter/book
+  // title the moment the connection completes (and back on disconnect). Skips
+  // while a render is in flight or the framebuffer is lent to a build; the
+  // next page render shows the right state anyway.
+  if (SETTINGS.bluetoothEnabled && section && renderer.hasFrameBuffer() && !RenderLock::peek()) {
+    const bool connected = BleHid.isConnected();
+    if (connected != statusBarBleConnected) {
+      statusBarBleConnected = connected;
+      renderStatusBar();
+      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    }
   }
 
   // Lazily resume a partial's extension build once the reader nears its watermark. Far from
@@ -1790,8 +1805,10 @@ void EpubReaderActivity::renderStatusBar() const {
   }
 
   if (SETTINGS.bluetoothEnabled && !BleHid.isConnected()) {
-    const std::string btStatus = tr(STR_BT_CONNECTING_POPUP);
-    title = title.empty() ? btStatus : btStatus + "  " + title;
+    // Take over the title slot entirely while connecting; the watcher in
+    // loop() redraws the bar on the connect/disconnect flip, restoring the
+    // chapter/book title.
+    title = tr(STR_BT_CONNECTING_POPUP);
   }
 
   GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset, true, currentPageBookmarked,

@@ -41,6 +41,11 @@ class EpubReaderActivity final : public Activity {
   bool showBookmarkMessage = false;
   bool ignoreNextConfirmRelease = false;
   bool currentPageBookmarked = false;
+  // BLE connection state the status bar last rendered with; loop() watches for
+  // a flip and redraws the bar so the "BT connecting" placeholder swaps back
+  // to the chapter/book title the moment the connection completes (and
+  // returns on disconnect) instead of waiting for the next page turn.
+  bool statusBarBleConnected = false;
   bool bookmarkRemoved = false;  // true when last toggle removed (controls popup text)
   std::vector<BookmarkEntry> cachedBookmarks;
   // Tracks whether this book is currently removed from Recent Books by the
