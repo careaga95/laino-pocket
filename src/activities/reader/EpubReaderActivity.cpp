@@ -39,6 +39,8 @@
 #include "util/BookmarkUtil.h"
 #include "util/ScreenshotUtil.h"
 #include "SdCardFontSystem.h"
+#include <esp_heap_caps.h>
+#include "rom/ets_sys.h"
 
 namespace {
 // pagesPerRefresh now comes from SETTINGS.getRefreshFrequency()
@@ -67,6 +69,45 @@ bool isInReadFolder(const std::string& path) {
   constexpr size_t n = sizeof(READ_FOLDER) - 1;  // length of "/Read" (excludes NUL)
   return path.size() > n && path.compare(0, n, READ_FOLDER) == 0 && path[n] == '/';
 }
+
+// Heap block map capture. heap_caps_dump walks each heap inside a critical
+// section (interrupts masked), so its output can neither go through the
+// UART-0 ROM path we can't see nor be flow-controlled toward the CDC (the CDC
+// ring drains in an interrupt handler — waiting deadlocks into the interrupt
+// WDT, field-verified). Instead the ROM putc parses each line into a compact
+// record; the captured table is logged after the dump with interrupts live.
+namespace heapmap {
+struct BlockRec {
+  uint32_t addr;
+  uint32_t size;
+  bool free;
+};
+constexpr uint16_t kMaxRecs = 1400;
+BlockRec* recs = nullptr;  // borrowed buffer, valid only during capture
+uint16_t recCount = 0;
+bool overflowed = false;
+char line[96];
+uint8_t lineLen = 0;
+
+void putc(char c) {
+  if (c != '\n') {
+    if (lineLen < sizeof(line) - 1) line[lineLen++] = c;
+    return;
+  }
+  line[lineLen] = '\0';
+  lineLen = 0;
+  // e.g. "Block 0x3fcc69bc data, size: 89424 bytes, Free: Yes"
+  unsigned addr = 0, size = 0;
+  char freeWord[4] = {0};
+  if (sscanf(line, "Block 0x%x data, size: %u bytes, Free: %3s", &addr, &size, freeWord) == 3) {
+    if (recs && recCount < kMaxRecs) {
+      recs[recCount++] = {addr, size, freeWord[0] == 'Y'};
+    } else {
+      overflowed = true;
+    }
+  }
+}
+}  // namespace heapmap
 
 class FrameBufferBuildLoan {
  public:
@@ -1509,13 +1550,55 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       // metadata + BLE (when on) + anything not yet instrumented.
       const size_t fontBytes = sdFontSystem.reportFontMemory();
       const size_t sectionBytes = section ? section->residentBytes() : 0;
+      const size_t epubBytes = epub ? epub->residentBytes() : 0;
       const size_t fbBytes = renderer.hasFrameBuffer() ? renderer.getBufferSize() : 0;
       const uint32_t heapTotal = ESP.getHeapSize();
       const uint32_t heapFree = ESP.getFreeHeap();
-      LOG_DBG("MEM", "audit: total=%u free=%u fb=%u fonts=%u section=%u building=%d ble=%d other=%d", heapTotal,
-              heapFree, (unsigned)fbBytes, (unsigned)fontBytes, (unsigned)sectionBytes,
+      LOG_DBG("MEM",
+              "audit: total=%u free=%u maxAlloc=%u fb=%u fonts=%u section=%u epub=%u cssRules=%u building=%d ble=%d "
+              "other=%d",
+              heapTotal, heapFree, (unsigned)ESP.getMaxAllocHeap(), (unsigned)fbBytes, (unsigned)fontBytes,
+              (unsigned)sectionBytes, (unsigned)epubBytes, (unsigned)(epub ? epub->cssRuleCount() : 0),
               section && section->isBuilding() ? 1 : 0, BleHid.isRunning() ? 1 : 0,
-              (int)(heapTotal - heapFree - fbBytes - fontBytes - sectionBytes));
+              (int)(heapTotal - heapFree - fbBytes - fontBytes - sectionBytes - epubBytes));
+      // One-shot heap block map for fragmentation analysis: dumps every block
+      // (address/size/free) once per boot, at the first settled (non-building)
+      // audit, so mid-heap long-lived allocations identify themselves. ~2-4 s
+      // of serial output; debug builds only.
+      static bool heapMapDumped = false;
+      if (!heapMapDumped && !(section && section->isBuilding())) {
+        heapMapDumped = true;
+        auto recBuf = makeUniqueNoThrow<heapmap::BlockRec[]>(heapmap::kMaxRecs);
+        if (recBuf) {
+          heapmap::recs = recBuf.get();
+          heapmap::recCount = 0;
+          heapmap::overflowed = false;
+          heapmap::lineLen = 0;
+          // Capture (interrupts masked inside the dump): parse into records,
+          // never wait. Log the table afterward with the system live.
+          ets_install_putc1(&heapmap::putc);
+          heap_caps_dump(MALLOC_CAP_8BIT);
+          ets_install_uart_printf();
+          heapmap::recs = nullptr;
+
+          LOG_DBG("MEM", "---- heap block map: %u blocks%s ----", heapmap::recCount,
+                  heapmap::overflowed ? " (TRUNCATED)" : "");
+          uint32_t dustCount = 0, dustBytes = 0;
+          for (uint16_t i = 0; i < heapmap::recCount; ++i) {
+            const auto& r = recBuf[i];
+            if (r.free || r.size >= 256) {
+              LOG_DBG("MEM", "%s 0x%08x %u", r.free ? "FREE" : "used", r.addr, r.size);
+            } else {
+              dustCount++;
+              dustBytes += r.size;
+            }
+          }
+          LOG_DBG("MEM", "dust: %u used blocks < 256B totaling %u bytes", dustCount, dustBytes);
+          LOG_DBG("MEM", "---- end heap block map ----");
+        } else {
+          LOG_ERR("MEM", "heap map skipped: no room for capture buffer");
+        }
+      }
     }
   }
   // Only persist when the position actually changed. render() also runs on menu,
