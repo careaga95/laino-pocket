@@ -104,6 +104,10 @@ class SdCardFont {
     uint32_t uniqueGlyphs = 0;
     uint32_t bitmapBytes = 0;
   };
+  // Log per-style resident heap (full tables + kept-if-fits mini arenas +
+  // advance tables + overflow bitmaps) and return the total in bytes. Pure
+  // accounting — no allocation, no state change.
+  size_t reportMemory() const;
   void logStats(const char* label = "SDCF");
   void resetStats();
   const Stats& getStats() const { return stats_; }

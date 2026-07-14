@@ -38,6 +38,7 @@
 #include "fontIds.h"
 #include "util/BookmarkUtil.h"
 #include "util/ScreenshotUtil.h"
+#include "SdCardFontSystem.h"
 
 namespace {
 // pagesPerRefresh now comes from SETTINGS.getRefreshFrequency()
@@ -1502,6 +1503,20 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     // maxAlloc/free ratio across pages points at whichever allocation pattern the
     // preceding lines show (mini rebuilds, kern reloads, BLE churn).
     LOG_DBG("MEM", "post-render: free=%u maxAlloc=%u", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+    {
+      // Heap audit: attribute resident heap to its owners so margin work is
+      // measurement-driven. `other` = IDF/Arduino baseline + SdFat + epub
+      // metadata + BLE (when on) + anything not yet instrumented.
+      const size_t fontBytes = sdFontSystem.reportFontMemory();
+      const size_t sectionBytes = section ? section->residentBytes() : 0;
+      const size_t fbBytes = renderer.hasFrameBuffer() ? renderer.getBufferSize() : 0;
+      const uint32_t heapTotal = ESP.getHeapSize();
+      const uint32_t heapFree = ESP.getFreeHeap();
+      LOG_DBG("MEM", "audit: total=%u free=%u fb=%u fonts=%u section=%u building=%d ble=%d other=%d", heapTotal,
+              heapFree, (unsigned)fbBytes, (unsigned)fontBytes, (unsigned)sectionBytes,
+              section && section->isBuilding() ? 1 : 0, BleHid.isRunning() ? 1 : 0,
+              (int)(heapTotal - heapFree - fbBytes - fontBytes - sectionBytes));
+    }
   }
   // Only persist when the position actually changed. render() also runs on menu,
   // bookmark and screenshot re-renders, and writeAtomic is several FAT ops for 6 bytes.

@@ -1406,6 +1406,33 @@ const EpdGlyph* SdCardFont::onGlyphMiss(void* ctx, uint32_t codepoint) {
   return &self->overflow_[slot].glyph;
 }
 
+size_t SdCardFont::reportMemory() const {
+  size_t total = 0;
+  for (uint8_t si = 0; si < MAX_STYLES; ++si) {
+    const auto& s = styles_[si];
+    if (!s.present) continue;
+    size_t fixed = 0;  // loaded once per family: interval/kern/lig tables
+    if (s.fullIntervals) fixed += s.header.intervalCount * sizeof(EpdUnicodeInterval);
+    if (s.bmpIntervals) fixed += s.header.intervalCount * sizeof(PerStyle::BmpInterval16);
+    if (s.kernLeftClasses) fixed += s.header.kernLeftEntryCount * sizeof(EpdKernClassEntry);
+    if (s.kernRightClasses) fixed += s.header.kernRightEntryCount * sizeof(EpdKernClassEntry);
+    if (s.ligaturePairs) fixed += s.header.ligaturePairCount * sizeof(EpdLigaturePair);
+    // kept-if-fits mini arenas: capacity (not count) is what stays resident
+    size_t mini = s.miniIntervalCapacity * sizeof(EpdUnicodeInterval) + s.miniGlyphCapacity * sizeof(EpdGlyph) +
+                  s.miniBitmapCapacity + s.miniKernLeftCapacity * sizeof(EpdKernClassEntry) +
+                  s.miniKernRightCapacity * sizeof(EpdKernClassEntry) + s.miniKernMatrixCapacity;
+    const size_t adv = advanceTableSize_[si] * sizeof(AdvanceEntry);
+    LOG_DBG("SDCF", "mem style%u: fixed=%u mini=%u adv=%u", si, (unsigned)fixed, (unsigned)mini, (unsigned)adv);
+    total += fixed + mini + adv;
+  }
+  size_t overflowBytes = 0;
+  for (uint32_t i = 0; i < overflowCount_; ++i) {
+    if (overflow_[i].bitmap) overflowBytes += overflow_[i].glyph.dataLength;
+  }
+  total += overflowBytes + overflowCount_ * sizeof(OverflowEntry);
+  return total;
+}
+
 bool SdCardFont::isOverflowGlyph(const EpdGlyph* glyph) const {
   for (uint32_t i = 0; i < overflowCount_; i++) {
     if (&overflow_[i].glyph == glyph) return true;
