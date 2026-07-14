@@ -63,7 +63,7 @@ bool appendNumericEntity(std::string& output, const char* entity, size_t len) {
   if (len < 4 || entity[0] != '&' || entity[1] != '#' || entity[len - 1] != ';') return false;
   size_t pos = 2;
   uint32_t base = 10;
-  if (pos < len - 1 && (entity[pos] == 'x' || entity[pos] == 'X')) {
+  if (entity[pos] == 'x' || entity[pos] == 'X') {
     base = 16;
     pos++;
   }
