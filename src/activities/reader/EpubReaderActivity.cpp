@@ -1447,9 +1447,8 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     // so the pass never starves concurrent allocations. Blocking panels skip
     // the buffers entirely (nothing to overlap).
     auto lsbPlaneBuf = overlapRefresh ? makeUniqueNoThrow<uint8_t[]>(planeBytes) : nullptr;
-    auto msbPlaneBuf = (lsbPlaneBuf && ESP.getFreeHeap() >= planeBytes + 60000)
-                           ? makeUniqueNoThrow<uint8_t[]>(planeBytes)
-                           : nullptr;
+    auto msbPlaneBuf =
+        (lsbPlaneBuf && ESP.getFreeHeap() >= planeBytes + 60000) ? makeUniqueNoThrow<uint8_t[]>(planeBytes) : nullptr;
 
     if (lsbPlaneBuf) {
       renderPlaneToBuffer(true, lsbPlaneBuf.get());
