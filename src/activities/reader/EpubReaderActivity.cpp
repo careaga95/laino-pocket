@@ -285,20 +285,25 @@ void EpubReaderActivity::loop() {
   constexpr unsigned long IDLE_PREWARM_DEBOUNCE_MS = 400;
   if (section && !section->isBuilding() && !RenderLock::peek() && renderer.hasFrameBuffer() &&
       lastRenderCompleteMs != 0 && millis() - lastRenderCompleteMs > IDLE_PREWARM_DEBOUNCE_MS &&
-      ESP.getFreeHeap() > RENDER_MIN_FREE_HEAP &&
+      ESP.getFreeHeap() > RENDER_MIN_FREE_HEAP && ESP.getMaxAllocHeap() > BACKGROUND_BUILD_MIN_MAX_ALLOC &&
       (idlePrewarmSpine != currentSpineIndex || idlePrewarmPage != section->currentPage)) {
-    idlePrewarmSpine = currentSpineIndex;
-    idlePrewarmPage = section->currentPage;
-    const int nextPage = section->currentPage + 1;
-    if (nextPage < static_cast<int>(section->pageCount)) {
-      RenderLock lock;  // the page table must not change under the scan
-      if (const auto p = section->loadPage(nextPage)) {
-        if (auto* fcm = renderer.getFontCacheManager()) {
-          const auto t0 = millis();
-          auto scope = fcm->createPrewarmScope();
-          p->render(renderer, SETTINGS.getReaderFontId(), 0, 0);  // scan only, no pixels
-          scope.endScanAndPrewarm();
-          LOG_DBG("ERS", "Idle prewarm: page %d in %lums", nextPage, millis() - t0);
+    RenderLock lock;  // the page table must not change under the scan
+    // Re-check under the lock: peek() and acquisition are not atomic, so the render
+    // task may have reset/replaced the section or moved the page in between.
+    if (section && !section->isBuilding() &&
+        (idlePrewarmSpine != currentSpineIndex || idlePrewarmPage != section->currentPage)) {
+      idlePrewarmSpine = currentSpineIndex;
+      idlePrewarmPage = section->currentPage;
+      const int nextPage = section->currentPage + 1;
+      if (nextPage < static_cast<int>(section->pageCount)) {
+        if (const auto p = section->loadPage(nextPage)) {
+          if (auto* fcm = renderer.getFontCacheManager()) {
+            const auto t0 = millis();
+            auto scope = fcm->createPrewarmScope();
+            p->render(renderer, SETTINGS.getReaderFontId(), 0, 0);  // scan only, no pixels
+            scope.endScanAndPrewarm();
+            LOG_DBG("ERS", "Idle prewarm: page %d in %lums", nextPage, millis() - t0);
+          }
         }
       }
     }
@@ -1526,6 +1531,13 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       renderer.waitRefreshComplete();
       if (!scratch) {
         LOG_ERR("ERS", "OOM: grayscale strip scratch (%d bytes); skipping AA this page", gwBytes * STRIP_ROWS);
+        if (overlapRefresh) {
+          // The BW refresh ran the shadow-free async path, so controller RAM's
+          // differential baseline was never rebuilt. Even with AA skipped it must
+          // be re-synced from the intact BW framebuffer, or the next differential
+          // update diffs against stale contents.
+          renderer.cleanupGrayscaleWithFrameBuffer();
+        }
       } else {
         // Bands may be streamed in any order: X4 windows each via setRamArea,
         // X3 via PTL.
