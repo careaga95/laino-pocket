@@ -43,12 +43,12 @@ class HalDisplay {
   // while the panel refreshes on its own. The framebuffer must stay untouched
   // until waitRefreshComplete(), and the caller must rebuild the differential
   // baseline before the next differential update (the tiled grayscale cleanup
-  // does). Panels without async support fall back to a blocking refresh.
+  // does). Panels without deferral fall back to a blocking refresh.
   void displayBufferAsync(RefreshMode mode = RefreshMode::FAST_REFRESH);
-  // Block until a pending async refresh completes (no-op when none is).
+  // Block until a pending deferred refresh completes (no-op when none is).
   void waitRefreshComplete();
-  // True when displayBufferAsync() genuinely overlaps (panel driver has real
-  // async support); false where it falls back to a blocking refresh.
+  // True when displayBufferAsync() genuinely overlaps (panel driver defers);
+  // false where it falls back to a blocking refresh.
   bool supportsAsyncRefresh() const;
   void refreshDisplay(RefreshMode mode = RefreshMode::FAST_REFRESH, bool turnOffScreen = false);
 

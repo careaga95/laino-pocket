@@ -163,13 +163,22 @@ class SdCardFont {
     // Stub EpdFontData returned when not prewarmed
     EpdFontData stubData{};
 
-    // Mini EpdFontData built during prewarm
+    // Mini EpdFontData built during prewarm. Buffers are kept-if-fits across pages
+    // (capacities below track allocated sizes): freeing and reallocating slightly
+    // different sizes on every page turn was a primary heap fragmenter — each page's
+    // freed hole rarely fit the next page's need, so maxAlloc eroded all session.
+    // After a few pages the capacities converge on the book's max and page turns
+    // stop allocating entirely. freeStyleMiniData() still releases everything (and
+    // zeroes capacities) for style eviction / font unload.
     EpdFontData miniData{};
     EpdUnicodeInterval* miniIntervals = nullptr;
     EpdGlyph* miniGlyphs = nullptr;
     uint8_t* miniBitmap = nullptr;
     uint32_t miniIntervalCount = 0;
     uint32_t miniGlyphCount = 0;
+    uint32_t miniIntervalCapacity = 0;
+    uint32_t miniGlyphCapacity = 0;
+    uint32_t miniBitmapCapacity = 0;
 
     // Per-page mini kern matrix (built by buildMiniKernMatrix on each full
     // prewarm). miniKernLeftClasses/miniKernRightClasses map ONLY the codepoints
@@ -184,6 +193,10 @@ class SdCardFont {
     uint8_t miniKernLeftClassCount = 0;
     uint8_t miniKernRightClassCount = 0;
     int8_t* miniKernMatrix = nullptr;
+    // Kept-if-fits capacities, same rationale as the mini glyph buffers above.
+    uint16_t miniKernLeftCapacity = 0;
+    uint16_t miniKernRightCapacity = 0;
+    uint32_t miniKernMatrixCapacity = 0;
 
     // The EpdFont whose data pointer we manage
     EpdFont epdFont{&stubData};

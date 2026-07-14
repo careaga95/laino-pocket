@@ -257,11 +257,51 @@ void EpubReaderActivity::openReaderMenu() {
                          });
 }
 
+bool EpubReaderActivity::buildTickHeapGate() {
+  const size_t freeHeap = ESP.getFreeHeap();
+  const size_t maxBlock = ESP.getMaxAllocHeap();
+  if (freeHeap >= BACKGROUND_BUILD_MIN_FREE_HEAP && maxBlock >= BACKGROUND_BUILD_MIN_MAX_ALLOC) {
+    return true;
+  }
+  // Below the floors: just wait. The tick is deferrable — page-turn transients
+  // free up between turns and the tick retries every loop pass.
+  return false;
+}
+
 void EpubReaderActivity::loop() {
   if (!epub) {
     // Should never happen
     finish();
     return;
+  }
+
+  // Idle glyph prewarm for the likely next page (currentPage + 1). The scan
+  // pass draws nothing (FCM scan mode suppresses pixels), so the displayed
+  // framebuffer is untouched; endScanAndPrewarm loads only glyphs not already
+  // cached. Debounced past rapid page-flipping, one attempt per position, and
+  // deferred while a render/build owns the CPU or the heap is at the render
+  // floor. Cross-chapter prewarm is deliberately out of scope (next spine's
+  // section isn't loaded).
+  constexpr unsigned long IDLE_PREWARM_DEBOUNCE_MS = 400;
+  if (section && !section->isBuilding() && !RenderLock::peek() && renderer.hasFrameBuffer() &&
+      lastRenderCompleteMs != 0 && millis() - lastRenderCompleteMs > IDLE_PREWARM_DEBOUNCE_MS &&
+      ESP.getFreeHeap() > RENDER_MIN_FREE_HEAP &&
+      (idlePrewarmSpine != currentSpineIndex || idlePrewarmPage != section->currentPage)) {
+    idlePrewarmSpine = currentSpineIndex;
+    idlePrewarmPage = section->currentPage;
+    const int nextPage = section->currentPage + 1;
+    if (nextPage < static_cast<int>(section->pageCount)) {
+      RenderLock lock;  // the page table must not change under the scan
+      if (const auto p = section->loadPage(nextPage)) {
+        if (auto* fcm = renderer.getFontCacheManager()) {
+          const auto t0 = millis();
+          auto scope = fcm->createPrewarmScope();
+          p->render(renderer, SETTINGS.getReaderFontId(), 0, 0);  // scan only, no pixels
+          scope.endScanAndPrewarm();
+          LOG_DBG("ERS", "Idle prewarm: page %d in %lums", nextPage, millis() - t0);
+        }
+      }
+    }
   }
 
   // Lazily resume a partial's extension build once the reader nears its watermark. Far from
@@ -299,7 +339,8 @@ void EpubReaderActivity::loop() {
   // "far enough ahead" and stall the build at 0 pages -- then the first turn past the
   // watermark re-parses the whole chapter synchronously. Keep ticking until it finalizes.
   if (section && section->isBuilding() && !RenderLock::peek() &&
-      (section->isPartial() || static_cast<int>(section->pageCount) < section->currentPage + BUILD_WINDOW_AHEAD)) {
+      (section->isPartial() || static_cast<int>(section->pageCount) < section->currentPage + BUILD_WINDOW_AHEAD) &&
+      buildTickHeapGate()) {
     RenderLock lock;
     // Re-check under the lock: render() (which also holds the RenderLock) may have finalized the
     // build between the outer isBuilding() check and acquiring the lock here, in which case
@@ -1282,6 +1323,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     const auto start = millis();
     renderContents(std::move(p), orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft);
     LOG_DBG("ERS", "Rendered page in %dms", millis() - start);
+    lastRenderCompleteMs = millis();
   }
   // Only persist when the position actually changed. render() also runs on menu,
   // bookmark and screenshot re-renders, and writeAtomic is several FAT ops for 6 bytes.
@@ -1400,12 +1442,10 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     // HALF ghost-cleanup path, which drives every pixel to its target
     // regardless of residue.
     pagesUntilFullRefresh = 1;
-  } else if (overlapRefresh) {
-    // Async: start the waveform and return so the grayscale plane rendering
-    // below overlaps the panel's refresh time instead of following it.
-    ReaderUtils::displayWithRefreshCycleAsync(renderer, pagesUntilFullRefresh);
   } else {
-    ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
+    // Async form: start the waveform and return so the grayscale plane rendering
+    // below overlaps the panel's refresh time instead of following it.
+    ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh, overlapRefresh);
   }
   const auto tDisplay = millis();
 
@@ -1444,9 +1484,8 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     // so the pass never starves concurrent allocations. Blocking panels skip
     // the buffers entirely (nothing to overlap).
     auto lsbPlaneBuf = overlapRefresh ? makeUniqueNoThrow<uint8_t[]>(planeBytes) : nullptr;
-    auto msbPlaneBuf = (lsbPlaneBuf && ESP.getFreeHeap() >= planeBytes + 60000)
-                           ? makeUniqueNoThrow<uint8_t[]>(planeBytes)
-                           : nullptr;
+    auto msbPlaneBuf =
+        (lsbPlaneBuf && ESP.getFreeHeap() >= planeBytes + 60000) ? makeUniqueNoThrow<uint8_t[]>(planeBytes) : nullptr;
 
     if (lsbPlaneBuf) {
       renderPlaneToBuffer(true, lsbPlaneBuf.get());

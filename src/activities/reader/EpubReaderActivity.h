@@ -41,6 +41,13 @@ class EpubReaderActivity final : public Activity {
   bool showBookmarkMessage = false;
   bool ignoreNextConfirmRelease = false;
   bool currentPageBookmarked = false;
+  // Idle-time glyph prewarm: after a page settles, scan the LIKELY next page
+  // (scan mode draws nothing) and load its missing glyphs from SD during idle,
+  // so the next turn's in-render prewarm is a cache hit instead of ~100 ms of
+  // SD reads on the page-turn critical path. One attempt per position.
+  int idlePrewarmSpine = -1;
+  int idlePrewarmPage = -1;
+  unsigned long lastRenderCompleteMs = 0;
   bool bookmarkRemoved = false;  // true when last toggle removed (controls popup text)
   std::vector<BookmarkEntry> cachedBookmarks;
   // Tracks whether this book is currently removed from Recent Books by the
@@ -86,6 +93,27 @@ class EpubReaderActivity final : public Activity {
   // background build chunk never noticeably delays input or a pending render.
   static constexpr int BUILD_PAGES_PER_CHUNK = 8;
   static constexpr int BACKGROUND_BUILD_PAGES_PER_TICK = 2;
+
+  // MEMFIX-PORT: background-build heap floor; portable
+  // Skip background build ticks below this free-heap floor. The parse path grows
+  // word vectors of heap strings — throwing allocations that abort() on OOM under
+  // -fno-exceptions (field crash: bad_alloc in ParsedText::addWord during a
+  // background tick under heap pressure). The tick is deferrable work:
+  // page-turn transients free up between turns and the build resumes; the render
+  // path still builds the page it actually needs regardless of this floor.
+  static constexpr size_t BACKGROUND_BUILD_MIN_FREE_HEAP = 32 * 1024;
+  // Fragmentation floor for the same gate: a tick passed the free-heap floor at
+  // 34.7 KB free but the largest block was ~11 KB, and a parse allocation inside the
+  // tick aborted anyway. Free heap says how much memory exists; maxAlloc says whether
+  // any single allocation can actually have it. 16 KB also keeps the advance-table
+  // batch path (16 KB scratch) viable during builds.
+  static constexpr size_t BACKGROUND_BUILD_MIN_MAX_ALLOC = 16 * 1024;
+  // Gate for a background build tick: true when the heap can take parse allocations.
+  bool buildTickHeapGate();
+  // Heap floor for optional render-adjacent work (idle prewarm). Page
+  // deserialization (TextBlock word vectors/strings) and glyph caching allocate
+  // through throwing paths that abort() on OOM; skip deferrable work below it.
+  static constexpr size_t RENDER_MIN_FREE_HEAP = 24 * 1024;
   // How many pages to keep laid out ahead of the reader for a still-building section. A page
   // turn is ~1s on e-ink and a page builds in ~30ms, so the reader can't out-click the builder
   // -- a tiny buffer is enough. The background build stops once the watermark is this far
