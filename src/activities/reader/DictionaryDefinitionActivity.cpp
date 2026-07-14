@@ -11,6 +11,7 @@
 #include "CrossPointSettings.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/HtmlToPlainText.h"
 
 namespace {
 
@@ -28,6 +29,7 @@ void DictionaryDefinitionActivity::onEnter() {
   // Normalize StarDict multi-type separators so the wrap loop and the
   // C-string font APIs below both see the whole definition.
   std::replace(definition.begin(), definition.end(), '\0', '\n');
+  definition = htmlToPlainText(definition);
   wrapText();
   requestUpdate();
 }
