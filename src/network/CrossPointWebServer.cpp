@@ -26,6 +26,7 @@
 #include "html/SettingsPageHtml.generated.h"
 #include "html/js/jszip_minJs.generated.h"
 #include "util/BookCacheUtils.h"
+#include <Memory.h>
 
 namespace {
 // Folders/files to hide from the web interface file browser
@@ -484,13 +485,33 @@ void CrossPointWebServer::handleFileListData() const {
 
   server->setContentLength(CONTENT_LENGTH_UNKNOWN);
   server->send(200, "application/json", "");
-  server->sendContent("[");
+
+  // Batch entries into ~one-TCP-segment flushes. One sendContent per entry
+  // means one chunked frame in its own TCP segment per file; the client's
+  // delayed ACK (~40-200 ms each) turns a large directory into tens of
+  // seconds. ~1.4 KB batches collapse that to a handful of segments.
+  constexpr size_t BATCH_CAPACITY = 1400;
+  auto batch = makeUniqueNoThrow<char[]>(BATCH_CAPACITY);
+  size_t batchLen = 0;
+  const auto flushBatch = [&]() {
+    if (batchLen == 0) return;
+    server->sendContent(batch.get(), batchLen);
+    batchLen = 0;
+  };
+
   char output[512];
   constexpr size_t outputSize = sizeof(output);
   bool seenFirst = false;
   JsonDocument doc;
 
-  scanFiles(currentPath.c_str(), [this, &output, &doc, seenFirst](const FileInfo& info) mutable {
+  if (batch) {
+    batch[batchLen++] = '[';
+  } else {
+    LOG_ERR("WEB", "OOM: file list batch buffer; falling back to per-entry sends");
+    server->sendContent("[");
+  }
+
+  scanFiles(currentPath.c_str(), [&](const FileInfo& info) {
     doc.clear();
     doc["name"] = info.name;
     doc["size"] = info.size;
@@ -504,14 +525,26 @@ void CrossPointWebServer::handleFileListData() const {
       return;
     }
 
-    if (seenFirst) {
-      server->sendContent(",");
+    const size_t need = written + (seenFirst ? 1 : 0);
+    if (batch) {
+      if (batchLen + need > BATCH_CAPACITY) flushBatch();
+      if (seenFirst) batch[batchLen++] = ',';
+      memcpy(batch.get() + batchLen, output, written);
+      batchLen += written;
     } else {
-      seenFirst = true;
+      if (seenFirst) server->sendContent(",");
+      server->sendContent(output);
     }
-    server->sendContent(output);
+    seenFirst = true;
   });
-  server->sendContent("]");
+
+  if (batch) {
+    if (batchLen + 1 > BATCH_CAPACITY) flushBatch();
+    batch[batchLen++] = ']';
+    flushBatch();
+  } else {
+    server->sendContent("]");
+  }
   // End of streamed response, empty chunk to signal client
   server->sendContent("");
   LOG_DBG("WEB", "Served file listing page for path: %s", currentPath.c_str());
