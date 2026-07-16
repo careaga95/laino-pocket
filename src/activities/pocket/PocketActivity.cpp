@@ -48,7 +48,7 @@ void PocketActivity::render(RenderLock&&) {
   int viewableLeft = 0;
   renderer.getOrientedViewableTRBL(&viewableTop, &viewableRight, &viewableBottom, &viewableLeft);
 
-  const Rect hintSafeArea = UITheme::getInstance().getScreenSafeArea(renderer, true, true);
+  const Rect hintSafeArea = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
   const int safeLeft = std::max(viewableLeft, hintSafeArea.x);
   const int safeTop = std::max(viewableTop, hintSafeArea.y);
   const int safeRight = std::min(screenWidth - viewableRight, hintSafeArea.x + hintSafeArea.width);
@@ -60,6 +60,7 @@ void PocketActivity::render(RenderLock&&) {
     GUI.drawHeader(renderer, Rect{safeLeft, headerY, headerWidth, metrics.headerHeight}, tr(STR_LAINO_POCKET));
   }
 
+  // getScreenSafeArea() currently reserves front hints only, so Pocket keeps side-hint clearance local.
   const int sideInset = std::max(metrics.contentSidePadding, metrics.sideButtonHintsWidth + metrics.verticalSpacing);
   const int cardX = safeLeft + sideInset;
   const int cardY = headerY + metrics.headerHeight + metrics.verticalSpacing;
