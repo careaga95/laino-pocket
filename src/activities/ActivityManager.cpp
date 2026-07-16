@@ -2,6 +2,7 @@
 
 #include <FontCacheManager.h>
 #include <HalPowerManager.h>
+#include <Memory.h>
 
 #include <algorithm>
 
@@ -14,6 +15,7 @@
 #include "home/HomeActivity.h"
 #include "home/RecentBooksActivity.h"
 #include "network/CrossPointWebServerActivity.h"
+#include "pocket/PocketActivity.h"
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
@@ -193,6 +195,15 @@ void ActivityManager::goToBrowser() {
   }
 }
 
+void ActivityManager::goToPocket() {
+  auto activity = makeUniqueNoThrow<PocketActivity>(renderer, mappedInput);
+  if (!activity) {
+    LOG_ERR("ACT", "OOM: PocketActivity");
+    return;
+  }
+  replaceActivity(std::move(activity));
+}
+
 void ActivityManager::goToReader(std::string path) {
   replaceActivity(std::make_unique<ReaderActivity>(renderer, mappedInput, std::move(path)));
 }
@@ -217,6 +228,8 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem) {
       initialMenuItem = HomeMenuItem::RECENTS;
     } else if (activityName == "OpdsBookBrowser") {
       initialMenuItem = HomeMenuItem::OPDS_BROWSER;
+    } else if (activityName == "Pocket") {
+      initialMenuItem = HomeMenuItem::POCKET;
     } else if (activityName == "CrossPointWebServer") {
       initialMenuItem = HomeMenuItem::FILE_TRANSFER;
     } else if (activityName == "Settings") {

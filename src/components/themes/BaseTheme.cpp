@@ -665,9 +665,26 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
 void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                const std::function<std::string(int index)>& buttonLabel,
                                const std::function<UIIcon(int index)>& rowIcon) const {
-  for (int i = 0; i < buttonCount; ++i) {
-    const int tileY = BaseMetrics::values.verticalSpacing + rect.y +
-                      static_cast<int>(i) * (BaseMetrics::values.menuRowHeight + BaseMetrics::values.menuSpacing);
+  const int rowStep = BaseMetrics::values.menuRowHeight + BaseMetrics::values.menuSpacing;
+  const int contentHeight = std::max(0, rect.height - BaseMetrics::values.verticalSpacing);
+  const int pageItems = std::max(1, (contentHeight + BaseMetrics::values.menuSpacing) / rowStep);
+  const int safeSelectedIndex = std::max(0, selectedIndex);
+  const int pageStartIndex = (safeSelectedIndex / pageItems) * pageItems;
+
+  if (buttonCount > pageItems) {
+    const int pageCount = (buttonCount + pageItems - 1) / pageItems;
+    const int currentPage = pageStartIndex / pageItems;
+    const int scrollAreaHeight = pageItems * rowStep - BaseMetrics::values.menuSpacing;
+    const int scrollBarHeight = std::max(10, scrollAreaHeight * pageItems / buttonCount);
+    const int scrollBarY = rect.y + BaseMetrics::values.verticalSpacing +
+                           currentPage * (scrollAreaHeight - scrollBarHeight) / (pageCount - 1);
+    const int scrollBarX = rect.x + rect.width - BaseMetrics::values.scrollBarRightOffset -
+                           BaseMetrics::values.scrollBarWidth;
+    renderer.fillRect(scrollBarX, scrollBarY, BaseMetrics::values.scrollBarWidth, scrollBarHeight);
+  }
+
+  for (int i = pageStartIndex; i < buttonCount && i < pageStartIndex + pageItems; ++i) {
+    const int tileY = BaseMetrics::values.verticalSpacing + rect.y + static_cast<int>(i - pageStartIndex) * rowStep;
 
     const bool selected = selectedIndex == i;
 

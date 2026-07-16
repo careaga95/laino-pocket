@@ -21,7 +21,7 @@
 #include "fontIds.h"
 
 int HomeActivity::getMenuItemCount() const {
-  int count = 4;  // File Browser, Recents, File transfer, Settings
+  int count = 5;  // File Browser, Recents, Laino Pocket, File transfer, Settings
   if (!recentBooks.empty()) {
     count += recentBooks.size();
   }
@@ -194,6 +194,9 @@ void HomeActivity::loop() {
         case HomeMenuItem::OPDS_BROWSER:
           onOpdsBrowserOpen();
           break;
+        case HomeMenuItem::POCKET:
+          onPocketOpen();
+          break;
         case HomeMenuItem::FILE_TRANSFER:
           onFileTransferOpen();
           break;
@@ -231,9 +234,9 @@ void HomeActivity::render(RenderLock&&) {
                           std::bind(&HomeActivity::storeCoverBuffer, this));
 
   // Build menu items dynamically
-  std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FILE_TRANSFER),
-                                        tr(STR_SETTINGS_TITLE)};
-  std::vector<UIIcon> menuIcons = {Folder, Recent, Transfer, Settings};
+  std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_LAINO_POCKET),
+                                        tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE)};
+  std::vector<UIIcon> menuIcons = {Folder, Recent, Bookmark, Transfer, Settings};
 
   if (hasOpdsServers) {
     menuItems.insert(menuItems.begin() + 2, tr(STR_OPDS_BROWSER));
@@ -246,12 +249,13 @@ void HomeActivity::render(RenderLock&&) {
     menuIcons.insert(menuIcons.begin(), Book);
   }
 
+  const Rect safeArea = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+  const int menuTop = metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset;
+  const int menuBottom = safeArea.y + safeArea.height;
+  const Rect menuRect{safeArea.x, menuTop, safeArea.width, std::max(0, menuBottom - menuTop)};
+
   GUI.drawButtonMenu(
-      renderer,
-      Rect{0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset, pageWidth,
-           pageHeight - (metrics.headerHeight + metrics.homeTopPadding + metrics.verticalSpacing +
-                         metrics.homeMenuTopOffset + metrics.buttonHintsHeight)},
-      static_cast<int>(menuItems.size()),
+      renderer, menuRect, static_cast<int>(menuItems.size()),
       metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size(),
       [&menuItems](int index) { return std::string(menuItems[index]); },
       [&menuIcons](int index) { return menuIcons[index]; });
@@ -277,6 +281,8 @@ void HomeActivity::onFileBrowserOpen() { activityManager.goToFileBrowser(); }
 void HomeActivity::onRecentsOpen() { activityManager.goToRecentBooks(); }
 
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
+
+void HomeActivity::onPocketOpen() { activityManager.goToPocket(); }
 
 void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
 

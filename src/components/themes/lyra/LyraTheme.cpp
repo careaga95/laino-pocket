@@ -512,11 +512,26 @@ void LyraTheme::drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) c
 void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                const std::function<std::string(int index)>& buttonLabel,
                                const std::function<UIIcon(int index)>& rowIcon) const {
-  for (int i = 0; i < buttonCount; ++i) {
+  const int rowStep = LyraMetrics::values.menuRowHeight + LyraMetrics::values.menuSpacing;
+  const int pageItems = std::max(1, (rect.height + LyraMetrics::values.menuSpacing) / rowStep);
+  const int safeSelectedIndex = std::max(0, selectedIndex);
+  const int pageStartIndex = (safeSelectedIndex / pageItems) * pageItems;
+
+  if (buttonCount > pageItems) {
+    const int pageCount = (buttonCount + pageItems - 1) / pageItems;
+    const int currentPage = pageStartIndex / pageItems;
+    const int scrollAreaHeight = pageItems * rowStep - LyraMetrics::values.menuSpacing;
+    const int scrollBarHeight = std::max(10, scrollAreaHeight * pageItems / buttonCount);
+    const int scrollBarY = rect.y + currentPage * (scrollAreaHeight - scrollBarHeight) / (pageCount - 1);
+    const int scrollBarX =
+        rect.x + rect.width - LyraMetrics::values.scrollBarRightOffset - LyraMetrics::values.scrollBarWidth;
+    renderer.fillRect(scrollBarX, scrollBarY, LyraMetrics::values.scrollBarWidth, scrollBarHeight);
+  }
+
+  for (int i = pageStartIndex; i < buttonCount && i < pageStartIndex + pageItems; ++i) {
     int tileWidth = rect.width - LyraMetrics::values.contentSidePadding * 2;
-    Rect tileRect = Rect{rect.x + LyraMetrics::values.contentSidePadding,
-                         rect.y + i * (LyraMetrics::values.menuRowHeight + LyraMetrics::values.menuSpacing), tileWidth,
-                         LyraMetrics::values.menuRowHeight};
+    Rect tileRect = Rect{rect.x + LyraMetrics::values.contentSidePadding, rect.y + (i - pageStartIndex) * rowStep,
+                         tileWidth, LyraMetrics::values.menuRowHeight};
 
     const bool selected = selectedIndex == i;
 
