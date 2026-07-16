@@ -12,9 +12,9 @@ const char COMPILED_CARD_JSON[] = R"json({
       "title": "Prepare renewal call",
       "subtitle": "Today · 11:00",
       "lines": [
-        "Review premium figures",
-        "Check engineering note",
-        "Agree market strategy"
+        "- Review premium figures",
+        "- Check engineering note",
+        "- Agree market strategy"
       ]
     },
     {
@@ -22,9 +22,9 @@ const char COMPILED_CARD_JSON[] = R"json({
       "title": "Today",
       "subtitle": "Wednesday · 3 priorities",
       "lines": [
-        "Review Pocket Phase 3",
-        "Follow up with engineering",
-        "Prepare client meeting"
+        "- Review Pocket Phase 3",
+        "- Follow up with engineering",
+        "- Prepare client meeting"
       ]
     },
     {
@@ -32,8 +32,8 @@ const char COMPILED_CARD_JSON[] = R"json({
       "title": "Waiting on",
       "subtitle": "2 open items",
       "lines": [
-        "Engineering note · Quantum",
-        "Updated terms · Market"
+        "- Engineering note · Quantum",
+        "- Updated terms · Market"
       ]
     }
   ]

@@ -21,7 +21,7 @@ void loadFallbackCardBundle(CardBundle& destination) {
   copyLiteral(card.label, "Laino Next");
   copyLiteral(card.title, "Prepare renewal call");
   copyLiteral(card.subtitle, "Today \xC2\xB7 11:00");
-  copyLiteral(card.lines[0], "Review premium figures");
+  copyLiteral(card.lines[0], "- Review premium figures");
   card.lineCount = 1;
 }
 

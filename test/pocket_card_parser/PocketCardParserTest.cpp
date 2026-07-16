@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <initializer_list>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,32 @@ void expectFailureLeavesDestinationUnchanged(const std::string& json, const pock
 
 std::string withInvalidByte() { return std::string(1, static_cast<char>(0x80)); }
 
+std::string escapedAscii(const size_t codepointCount) {
+  std::string result;
+  for (size_t i = 0; i < codepointCount; ++i) result += R"(\u0041)";
+  return result;
+}
+
+std::string rawBytes(const std::initializer_list<unsigned int> bytes) {
+  std::string result;
+  for (const unsigned int byte : bytes) result.push_back(static_cast<char>(byte));
+  return result;
+}
+
+std::string nestedArrays(const size_t containerCount) {
+  return std::string(containerCount, '[') + "0" + std::string(containerCount, ']');
+}
+
+std::string bundleWithRootUnknown(const size_t nestedContainerCount) {
+  return "{\"protocolVersion\":1,\"future\":" + nestedArrays(nestedContainerCount) + ",\"cards\":[" + cardJson() + "]}";
+}
+
+std::string bundleWithCardUnknown(const size_t nestedContainerCount) {
+  std::string card = cardJson();
+  card.insert(card.size() - 1, ",\"future\":" + nestedArrays(nestedContainerCount));
+  return bundleJson({card});
+}
+
 }  // namespace
 
 TEST(PocketCardParserValidTest, CompleteCompiledFixturePreservesEveryFieldAndOrder) {
@@ -61,24 +88,24 @@ TEST(PocketCardParserValidTest, CompleteCompiledFixturePreservesEveryFieldAndOrd
   EXPECT_STREQ(bundle.cards[0].title, "Prepare renewal call");
   EXPECT_STREQ(bundle.cards[0].subtitle, "Today \xC2\xB7 11:00");
   ASSERT_EQ(bundle.cards[0].lineCount, 3U);
-  EXPECT_STREQ(bundle.cards[0].lines[0], "Review premium figures");
-  EXPECT_STREQ(bundle.cards[0].lines[1], "Check engineering note");
-  EXPECT_STREQ(bundle.cards[0].lines[2], "Agree market strategy");
+  EXPECT_STREQ(bundle.cards[0].lines[0], "- Review premium figures");
+  EXPECT_STREQ(bundle.cards[0].lines[1], "- Check engineering note");
+  EXPECT_STREQ(bundle.cards[0].lines[2], "- Agree market strategy");
 
   EXPECT_STREQ(bundle.cards[1].label, "Daily Command");
   EXPECT_STREQ(bundle.cards[1].title, "Today");
   EXPECT_STREQ(bundle.cards[1].subtitle, "Wednesday \xC2\xB7 3 priorities");
   ASSERT_EQ(bundle.cards[1].lineCount, 3U);
-  EXPECT_STREQ(bundle.cards[1].lines[0], "Review Pocket Phase 3");
-  EXPECT_STREQ(bundle.cards[1].lines[1], "Follow up with engineering");
-  EXPECT_STREQ(bundle.cards[1].lines[2], "Prepare client meeting");
+  EXPECT_STREQ(bundle.cards[1].lines[0], "- Review Pocket Phase 3");
+  EXPECT_STREQ(bundle.cards[1].lines[1], "- Follow up with engineering");
+  EXPECT_STREQ(bundle.cards[1].lines[2], "- Prepare client meeting");
 
   EXPECT_STREQ(bundle.cards[2].label, "Waiting On");
   EXPECT_STREQ(bundle.cards[2].title, "Waiting on");
   EXPECT_STREQ(bundle.cards[2].subtitle, "2 open items");
   ASSERT_EQ(bundle.cards[2].lineCount, 2U);
-  EXPECT_STREQ(bundle.cards[2].lines[0], "Engineering note \xC2\xB7 Quantum");
-  EXPECT_STREQ(bundle.cards[2].lines[1], "Updated terms \xC2\xB7 Market");
+  EXPECT_STREQ(bundle.cards[2].lines[0], "- Engineering note \xC2\xB7 Quantum");
+  EXPECT_STREQ(bundle.cards[2].lines[1], "- Updated terms \xC2\xB7 Market");
 }
 
 TEST(PocketCardParserValidTest, ExactFieldLimitsAndSixLinesAreAcceptedAndNullTerminated) {
@@ -135,6 +162,28 @@ TEST(PocketCardParserValidTest, UnknownNestedFieldsAreIgnoredSafely) {
   EXPECT_EQ(parse(json, bundle), pocket::ParseResult::Success);
   EXPECT_EQ(bundle.cardCount, 1U);
   EXPECT_EQ(bundle.cards[0].lineCount, 0U);
+}
+
+TEST(PocketCardParserValidTest, EscapedSourceLongerThanLabelLimitIsAcceptedAtDecodedLimit) {
+  const std::string label = escapedAscii(pocket::MAX_LABEL_BYTES);
+  ASSERT_GT(label.size(), pocket::MAX_LABEL_BYTES);
+  pocket::CardBundle bundle;
+
+  ASSERT_EQ(parse(bundleJson({cardJson(label)}), bundle), pocket::ParseResult::Success);
+  EXPECT_EQ(std::strlen(bundle.cards[0].label), pocket::MAX_LABEL_BYTES);
+  EXPECT_EQ(std::string(bundle.cards[0].label), std::string(pocket::MAX_LABEL_BYTES, 'A'));
+}
+
+TEST(PocketCardParserValidTest, RootUnknownValueAtAbsoluteDepth16IsAccepted) {
+  pocket::CardBundle bundle;
+
+  EXPECT_EQ(parse(bundleWithRootUnknown(15), bundle), pocket::ParseResult::Success);
+}
+
+TEST(PocketCardParserValidTest, CardUnknownValueAtAbsoluteDepth16IsAccepted) {
+  pocket::CardBundle bundle;
+
+  EXPECT_EQ(parse(bundleWithCardUnknown(13), bundle), pocket::ParseResult::Success);
 }
 
 TEST(PocketCardParserDocumentFailureTest, NullInputIsRejected) {
@@ -212,6 +261,10 @@ TEST(PocketCardParserDocumentFailureTest, DuplicateRootRequiredFieldsAreRejected
       pocket::ParseResult::DuplicateField);
 }
 
+TEST(PocketCardParserDocumentFailureTest, RootUnknownValueAtAbsoluteDepth17IsRejected) {
+  expectFailureLeavesDestinationUnchanged(bundleWithRootUnknown(16), pocket::ParseResult::MalformedJson);
+}
+
 TEST(PocketCardParserCardFailureTest, NonObjectCardIsRejected) {
   expectFailureLeavesDestinationUnchanged(R"({"protocolVersion":1,"cards":["card"]})",
                                           pocket::ParseResult::WrongFieldType);
@@ -277,6 +330,11 @@ TEST(PocketCardParserCardFailureTest, EveryOversizedTextFieldIsRejectedWithoutTr
       pocket::ParseResult::TextTooLong);
 }
 
+TEST(PocketCardParserCardFailureTest, EscapedDecodedValueOneCodepointOverLabelLimitIsRejected) {
+  expectFailureLeavesDestinationUnchanged(bundleJson({cardJson(escapedAscii(pocket::MAX_LABEL_BYTES + 1))}),
+                                          pocket::ParseResult::TextTooLong);
+}
+
 TEST(PocketCardParserCardFailureTest, InvalidUtf8InEveryTextFieldIsRejected) {
   const std::string invalid = withInvalidByte();
   expectFailureLeavesDestinationUnchanged(bundleJson({cardJson(invalid)}), pocket::ParseResult::InvalidUtf8);
@@ -293,6 +351,31 @@ TEST(PocketCardParserCardFailureTest, IncompleteAndOverlongUtf8AreRejected) {
   expectFailureLeavesDestinationUnchanged(bundleJson({cardJson(overlong)}), pocket::ParseResult::InvalidUtf8);
 }
 
+TEST(PocketCardParserCardFailureTest, ThreeByteOverlongUtf8IsRejected) {
+  expectFailureLeavesDestinationUnchanged(bundleJson({cardJson(rawBytes({0xE0, 0x80, 0xAF}))}),
+                                          pocket::ParseResult::InvalidUtf8);
+}
+
+TEST(PocketCardParserCardFailureTest, FourByteOverlongUtf8IsRejected) {
+  expectFailureLeavesDestinationUnchanged(bundleJson({cardJson(rawBytes({0xF0, 0x80, 0x80, 0xAF}))}),
+                                          pocket::ParseResult::InvalidUtf8);
+}
+
+TEST(PocketCardParserCardFailureTest, Utf8EncodedSurrogateCodepointIsRejected) {
+  expectFailureLeavesDestinationUnchanged(bundleJson({cardJson(rawBytes({0xED, 0xA0, 0x80}))}),
+                                          pocket::ParseResult::InvalidUtf8);
+}
+
+TEST(PocketCardParserCardFailureTest, Utf8CodepointAboveUnicodeMaximumIsRejected) {
+  expectFailureLeavesDestinationUnchanged(bundleJson({cardJson(rawBytes({0xF4, 0x90, 0x80, 0x80}))}),
+                                          pocket::ParseResult::InvalidUtf8);
+}
+
+TEST(PocketCardParserCardFailureTest, UnescapedControlCharacterInStringIsMalformedJson) {
+  expectFailureLeavesDestinationUnchanged(bundleJson({cardJson(std::string("L\x1F", 2))}),
+                                          pocket::ParseResult::MalformedJson);
+}
+
 TEST(PocketCardParserCardFailureTest, InvalidUnicodeSurrogatesAreRejected) {
   expectFailureLeavesDestinationUnchanged(
       R"({"protocolVersion":1,"cards":[{"label":"\uD800","title":"T","subtitle":"S","lines":[]}]})",
@@ -300,6 +383,10 @@ TEST(PocketCardParserCardFailureTest, InvalidUnicodeSurrogatesAreRejected) {
   expectFailureLeavesDestinationUnchanged(
       R"({"protocolVersion":1,"cards":[{"label":"\uDC00","title":"T","subtitle":"S","lines":[]}]})",
       pocket::ParseResult::InvalidUtf8);
+}
+
+TEST(PocketCardParserCardFailureTest, CardUnknownValueAtAbsoluteDepth17IsRejected) {
+  expectFailureLeavesDestinationUnchanged(bundleWithCardUnknown(14), pocket::ParseResult::MalformedJson);
 }
 
 TEST(PocketCardParserSafetyTest, FailedParsingLeavesPopulatedDestinationUnchanged) {

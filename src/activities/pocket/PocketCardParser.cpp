@@ -248,16 +248,15 @@ class BoundedParser final {
     return ParseResult::Success;
   }
 
-  ParseResult skipValue(const size_t depth) {
-    if (depth > MAX_JSON_NESTING) return ParseResult::MalformedJson;
+  ParseResult skipValue(const size_t parentDepth) {
     skipWhitespace();
     switch (peek()) {
       case '"':
         return parseString(nullptr, 0, 0, false, ParseResult::MalformedJson);
       case '{':
-        return skipObject(depth);
+        return skipObject(parentDepth + 1);
       case '[':
-        return skipArray(depth);
+        return skipArray(parentDepth + 1);
       case 't':
         return parseLiteral("true", 4);
       case 'f':
@@ -271,6 +270,7 @@ class BoundedParser final {
   }
 
   ParseResult skipObject(const size_t depth) {
+    if (depth > MAX_JSON_NESTING) return ParseResult::MalformedJson;
     if (!consume('{')) return ParseResult::MalformedJson;
     skipWhitespace();
     if (consume('}')) return ParseResult::Success;
@@ -281,7 +281,7 @@ class BoundedParser final {
       if (result != ParseResult::Success) return result;
       skipWhitespace();
       if (!consume(':')) return ParseResult::MalformedJson;
-      result = skipValue(depth + 1);
+      result = skipValue(depth);
       if (result != ParseResult::Success) return result;
       skipWhitespace();
       if (consume('}')) return ParseResult::Success;
@@ -291,12 +291,13 @@ class BoundedParser final {
   }
 
   ParseResult skipArray(const size_t depth) {
+    if (depth > MAX_JSON_NESTING) return ParseResult::MalformedJson;
     if (!consume('[')) return ParseResult::MalformedJson;
     skipWhitespace();
     if (consume(']')) return ParseResult::Success;
 
     while (true) {
-      ParseResult result = skipValue(depth + 1);
+      ParseResult result = skipValue(depth);
       if (result != ParseResult::Success) return result;
       skipWhitespace();
       if (consume(']')) return ParseResult::Success;
@@ -311,9 +312,10 @@ class BoundedParser final {
     return parseString(destination, capacity, capacity - 1, true, ParseResult::InvalidUtf8);
   }
 
-  ParseResult parseLines(Card* card) {
+  ParseResult parseLines(Card* card, const size_t depth) {
     skipWhitespace();
     if (!consume('[')) return ParseResult::WrongFieldType;
+    if (depth > MAX_JSON_NESTING) return ParseResult::MalformedJson;
     skipWhitespace();
 
     size_t lineCount = 0;
@@ -338,7 +340,8 @@ class BoundedParser final {
     return ParseResult::Success;
   }
 
-  ParseResult parseCard(Card* card) {
+  ParseResult parseCard(Card* card, const size_t depth) {
+    if (depth > MAX_JSON_NESTING) return ParseResult::MalformedJson;
     if (!consume('{')) return ParseResult::WrongFieldType;
     skipWhitespace();
 
@@ -375,9 +378,9 @@ class BoundedParser final {
         } else if (field == SUBTITLE_SEEN) {
           result = parseRequiredText(card != nullptr ? card->subtitle : nullptr, MAX_SUBTITLE_BYTES + 1);
         } else if (field == LINES_SEEN) {
-          result = parseLines(card);
+          result = parseLines(card, depth + 1);
         } else {
-          result = skipValue(1);
+          result = skipValue(depth);
         }
         if (result != ParseResult::Success) return result;
 
@@ -391,9 +394,10 @@ class BoundedParser final {
     return seen == ALL_FIELDS ? ParseResult::Success : ParseResult::MissingRequiredField;
   }
 
-  ParseResult parseCards() {
+  ParseResult parseCards(const size_t depth) {
     skipWhitespace();
     if (!consume('[')) return ParseResult::WrongFieldType;
+    if (depth > MAX_JSON_NESTING) return ParseResult::MalformedJson;
     skipWhitespace();
     if (consume(']')) return ParseResult::EmptyCards;
 
@@ -402,7 +406,7 @@ class BoundedParser final {
       if (cardCount >= MAX_CARDS) return ParseResult::TooManyCards;
       skipWhitespace();
       if (peek() != '{') return ParseResult::WrongFieldType;
-      ParseResult result = parseCard(output != nullptr ? &output->cards[cardCount] : nullptr);
+      ParseResult result = parseCard(output != nullptr ? &output->cards[cardCount] : nullptr, depth + 1);
       if (result != ParseResult::Success) return result;
       ++cardCount;
       skipWhitespace();
@@ -428,7 +432,8 @@ class BoundedParser final {
                : ParseResult::UnsupportedProtocolVersion;
   }
 
-  ParseResult parseRootObject() {
+  ParseResult parseRootObject(const size_t depth) {
+    if (depth > MAX_JSON_NESTING) return ParseResult::MalformedJson;
     if (!consume('{')) return ParseResult::WrongFieldType;
     skipWhitespace();
 
@@ -457,9 +462,9 @@ class BoundedParser final {
         if (field == VERSION_SEEN) {
           result = parseProtocolVersion();
         } else if (field == CARDS_SEEN) {
-          result = parseCards();
+          result = parseCards(depth + 1);
         } else {
-          result = skipValue(1);
+          result = skipValue(depth);
         }
         if (result != ParseResult::Success) return result;
 
@@ -479,7 +484,7 @@ class BoundedParser final {
 
   ParseResult parseDocument() {
     skipWhitespace();
-    const ParseResult result = parseRootObject();
+    const ParseResult result = parseRootObject(1);
     if (result != ParseResult::Success) return result;
     skipWhitespace();
     return position == length ? ParseResult::Success : ParseResult::MalformedJson;
@@ -492,12 +497,12 @@ ParseResult parseCardBundle(const char* json, const size_t jsonLength, CardBundl
   if (json == nullptr || jsonLength == 0) return ParseResult::EmptyInput;
   if (jsonLength > MAX_JSON_DOCUMENT_BYTES) return ParseResult::DocumentTooLarge;
 
-  // The first pass validates the complete document without touching destination.
+  // Both passes use identical schema and limits. Publication is expected to be infallible after validation;
+  // adding destination-dependent parsing behavior would violate this atomicity guarantee.
   BoundedParser validator(json, jsonLength, nullptr);
   const ParseResult validationResult = validator.parseDocument();
   if (validationResult != ParseResult::Success) return validationResult;
 
-  // A deterministic second pass publishes only a document already known to be valid.
   destination = CardBundle{};
   BoundedParser publisher(json, jsonLength, &destination);
   return publisher.parseDocument();

@@ -143,5 +143,6 @@ TEST(PocketCardTest, FallbackAlwaysContainsAValidCard) {
   ASSERT_LE(bundle.cardCount, pocket::MAX_CARDS);
   EXPECT_NE(bundle.cardAt(0).label[0], '\0');
   EXPECT_NE(bundle.cardAt(0).title[0], '\0');
+  EXPECT_STREQ(bundle.cardAt(0).lines[0], "- Review premium figures");
   EXPECT_LE(bundle.cardAt(0).lineCount, pocket::MAX_LINES_PER_CARD);
 }
