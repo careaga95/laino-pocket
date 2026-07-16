@@ -7,19 +7,23 @@
 #include <algorithm>
 
 #include "MappedInputManager.h"
+#include "PocketBundleRuntime.h"
 #include "PocketCard.h"
 #include "PocketCardFixture.h"
-#include "PocketCardParser.h"
 #include "PocketCardRenderer.h"
 #include "components/UITheme.h"
 
 void PocketActivity::onEnter() {
   Activity::onEnter();
-  const pocket::ParseResult result =
-      pocket::parseCardBundle(pocket::COMPILED_CARD_JSON, pocket::COMPILED_CARD_JSON_LENGTH, cardBundle);
-  if (result != pocket::ParseResult::Success) {
-    LOG_ERR("PKT", "%s", pocket::parseResultName(result));
-    pocket::loadFallbackCardBundle(cardBundle);
+  const pocket::BundleLoadOutcome outcome =
+      pocket::loadPocketBundle(cache, pocket::COMPILED_CARD_JSON, pocket::COMPILED_CARD_JSON_LENGTH, cardBundle);
+  if (outcome.source == pocket::BundleSource::Cache) {
+    LOG_DBG("PKT", "source=%s slot=%s generation=%llu", pocket::bundleSourceName(outcome.source),
+            pocket::cacheSlotName(outcome.cacheLoad.slot),
+            static_cast<unsigned long long>(outcome.cacheLoad.generation));
+  } else {
+    LOG_DBG("PKT", "source=%s cache=%s seed=%s", pocket::bundleSourceName(outcome.source),
+            pocket::cacheResultName(outcome.cacheLoad.result), pocket::cacheResultName(outcome.seed.result));
   }
   cardSelection.setCardCount(cardBundle.cardCount);
   requestUpdate();

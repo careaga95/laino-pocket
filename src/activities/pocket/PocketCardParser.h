@@ -24,6 +24,7 @@ enum class ParseResult : uint8_t {
 };
 
 ParseResult parseCardBundle(const char* json, size_t jsonLength, CardBundle& destination);
+ParseResult validateCardBundle(const char* json, size_t jsonLength);
 const char* parseResultName(ParseResult result);
 
 }  // namespace pocket
