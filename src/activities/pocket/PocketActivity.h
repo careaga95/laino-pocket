@@ -1,11 +1,13 @@
 #pragma once
 
+#include "PocketCard.h"
+#include "PocketCardSelection.h"
 #include "activities/Activity.h"
 
 struct Rect;
 
 class PocketActivity final : public Activity {
-  void drawCard(Rect rect) const;
+  pocket::CardSelection cardSelection{pocket::CARD_COUNT};
 
  public:
   explicit PocketActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
