@@ -148,6 +148,8 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   if (s.sdFontFamilyName[0] != '\0') {
     doc["sdFontFamilyName"] = s.sdFontFamilyName;
   }
+  // Internal migration marker — not user configurable and therefore not in SettingsList.
+  doc["clockSyncDataVersion"] = s.clockSyncDataVersion;
 
   // Language -- managed by LanguageSelectActivity, not in SettingsList.
   // Stored as ISO code string ("EN", "DE", ...) for stability across enum reorders.
@@ -231,6 +233,16 @@ bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool*
     s.sleepTimeoutMinutes = CrossPointSettings::sleepTimeoutEnumToMinutes(legacyValue);
     if (needsResave) *needsResave = true;
   }
+
+  // Settings written before complete RTC date support have only clockHasBeenSynced.
+  // Persist an explicit version 0 so the first WiFi connection performs the one-time upgrade.
+  if (doc["clockSyncDataVersion"].isNull()) {
+    s.clockSyncDataVersion = 0;
+    if (needsResave) *needsResave = true;
+  } else {
+    s.clockSyncDataVersion = doc["clockSyncDataVersion"] | static_cast<uint8_t>(0);
+  }
+
   // Front button remap — managed by RemapFrontButtons sub-activity, not in SettingsList.
   using S = CrossPointSettings;
   s.frontButtonBack =
