@@ -2,16 +2,26 @@
 
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <Logging.h>
 
 #include <algorithm>
 
 #include "MappedInputManager.h"
 #include "PocketCard.h"
+#include "PocketCardFixture.h"
+#include "PocketCardParser.h"
 #include "PocketCardRenderer.h"
 #include "components/UITheme.h"
 
 void PocketActivity::onEnter() {
   Activity::onEnter();
+  const pocket::ParseResult result =
+      pocket::parseCardBundle(pocket::COMPILED_CARD_JSON, pocket::COMPILED_CARD_JSON_LENGTH, cardBundle);
+  if (result != pocket::ParseResult::Success) {
+    LOG_ERR("PKT", "%s", pocket::parseResultName(result));
+    pocket::loadFallbackCardBundle(cardBundle);
+  }
+  cardSelection.setCardCount(cardBundle.cardCount);
   requestUpdate();
 }
 
@@ -66,10 +76,10 @@ void PocketActivity::render(RenderLock&&) {
   const int cardY = headerY + metrics.headerHeight + metrics.verticalSpacing;
   const int cardWidth = std::max(0, safeRight - safeLeft - sideInset * 2);
   const int availableCardHeight = std::max(0, safeBottom - cardY - metrics.verticalSpacing);
-  const auto& card = pocket::cardAt(cardSelection.index());
+  const auto& card = cardBundle.cardAt(cardSelection.index());
   const int cardHeight = std::min(availableCardHeight, pocket::preferredCardHeight(renderer, card));
   pocket::drawCard(renderer, Rect{cardX, cardY, cardWidth, cardHeight}, card, cardSelection.index(),
-                   pocket::CARD_COUNT);
+                   cardBundle.cardCount);
 
   const char* previousLabel = cardSelection.canSelectPrevious() ? tr(STR_POCKET_PREVIOUS) : "";
   const char* nextLabel = cardSelection.canSelectNext() ? tr(STR_POCKET_NEXT) : "";

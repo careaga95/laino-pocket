@@ -36,6 +36,28 @@ TEST(PocketCardSelectionTest, RepeatedNavigationNeverLeavesDeck) {
   EXPECT_EQ(selection.index(), 0U);
 }
 
+TEST(PocketCardSelectionTest, OneCardDisablesPreviousAndNext) {
+  pocket::CardSelection selection(1);
+
+  EXPECT_FALSE(selection.canSelectPrevious());
+  EXPECT_FALSE(selection.canSelectNext());
+  EXPECT_FALSE(selection.selectPrevious());
+  EXPECT_FALSE(selection.selectNext());
+  EXPECT_EQ(selection.index(), 0U);
+}
+
+TEST(PocketCardSelectionTest, UpdatedCardCountBoundsSelection) {
+  pocket::CardSelection selection(3);
+  ASSERT_TRUE(selection.selectNext());
+  ASSERT_EQ(selection.index(), 1U);
+
+  selection.setCardCount(1);
+
+  EXPECT_EQ(selection.cardCount(), 1U);
+  EXPECT_EQ(selection.index(), 0U);
+  EXPECT_FALSE(selection.canSelectNext());
+}
+
 TEST(PocketTextTest, OversizedTextIsTruncatedWithEllipsis) {
   char buffer[16];
   const auto measureBytes = [](const char* text) { return static_cast<int>(std::strlen(text)); };
@@ -97,9 +119,29 @@ TEST(PocketTextTest, HandlesMissingEmptyAndNonPositiveInputs) {
   EXPECT_EQ(measureCalls, 0);
 }
 
-TEST(PocketCardTest, OutOfRangeIndexFallsBackToFirstFixture) {
-  const pocket::Card& firstCard = pocket::cardAt(0);
-  const pocket::Card& fallbackCard = pocket::cardAt(pocket::CARD_COUNT + 1);
+TEST(PocketCardTest, OutOfRangeIndexFallsBackToFirstCard) {
+  pocket::CardBundle bundle;
+  pocket::loadFallbackCardBundle(bundle);
+  const pocket::Card& firstCard = bundle.cardAt(0);
+  const pocket::Card& fallbackCard = bundle.cardAt(pocket::MAX_CARDS + 1);
 
   EXPECT_EQ(&fallbackCard, &firstCard);
+}
+
+TEST(PocketCardTest, EmptyBundleAccessRemainsInBounds) {
+  const pocket::CardBundle bundle;
+
+  EXPECT_EQ(&bundle.cardAt(500), &bundle.cards[0]);
+  EXPECT_STREQ(bundle.cardAt(500).label, "");
+}
+
+TEST(PocketCardTest, FallbackAlwaysContainsAValidCard) {
+  pocket::CardBundle bundle;
+  pocket::loadFallbackCardBundle(bundle);
+
+  ASSERT_GE(bundle.cardCount, pocket::MIN_CARDS);
+  ASSERT_LE(bundle.cardCount, pocket::MAX_CARDS);
+  EXPECT_NE(bundle.cardAt(0).label[0], '\0');
+  EXPECT_NE(bundle.cardAt(0).title[0], '\0');
+  EXPECT_LE(bundle.cardAt(0).lineCount, pocket::MAX_LINES_PER_CARD);
 }

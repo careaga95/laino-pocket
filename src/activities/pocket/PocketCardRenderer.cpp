@@ -16,13 +16,6 @@ namespace {
 constexpr size_t textBufferSize = 128;
 constexpr size_t positionBufferSize = 24;
 
-const char* resolveText(const StrId id) {
-  if (id == StrId::_COUNT) {
-    return nullptr;
-  }
-  return I18N.get(id);
-}
-
 void drawTruncatedText(const GfxRenderer& renderer, const int fontId, const int x, const int y, const char* text,
                        const int maxWidth, const EpdFontFamily::Style style = EpdFontFamily::REGULAR) {
   char buffer[textBufferSize];
@@ -45,13 +38,13 @@ int preferredCardHeight(const GfxRenderer& renderer, const Card& card) {
   const int gap = std::max(2, metrics.verticalSpacing);
   int height = padding * 2 + renderer.getLineHeight(SMALL_FONT_ID);
 
-  if (resolveText(card.title) != nullptr) {
+  if (card.title[0] != '\0') {
     height += gap + renderer.getLineHeight(UI_12_FONT_ID);
   }
-  if (resolveText(card.subtitle) != nullptr) {
+  if (card.subtitle[0] != '\0') {
     height += gap + renderer.getLineHeight(SMALL_FONT_ID);
   }
-  if (card.lines != nullptr && card.lineCount > 0) {
+  if (card.lineCount > 0) {
     height += gap * 2;
     height += static_cast<int>(card.lineCount) * renderer.getLineHeight(UI_10_FONT_ID);
     height += static_cast<int>(card.lineCount - 1) * gap;
@@ -89,34 +82,30 @@ void drawCard(const GfxRenderer& renderer, const Rect rect, const Card& card, co
 
     const int positionWidth = renderer.getTextWidth(SMALL_FONT_ID, position);
     const int labelWidth = std::max(0, textWidth - positionWidth - gap);
-    drawTruncatedText(renderer, SMALL_FONT_ID, textX, textY, resolveText(card.label), labelWidth);
+    drawTruncatedText(renderer, SMALL_FONT_ID, textX, textY, card.label, labelWidth);
     if (position[0] != '\0' && positionWidth <= textWidth) {
       renderer.drawText(SMALL_FONT_ID, textX + textWidth - positionWidth, textY, position);
     }
     textY += labelHeight + gap;
   }
 
-  const char* title = resolveText(card.title);
+  const char* title = card.title;
   const int titleHeight = renderer.getLineHeight(UI_12_FONT_ID);
-  if (title != nullptr && hasVerticalSpace(textY, titleHeight, contentBottom)) {
+  if (title[0] != '\0' && hasVerticalSpace(textY, titleHeight, contentBottom)) {
     drawTruncatedText(renderer, UI_12_FONT_ID, textX, textY, title, textWidth, EpdFontFamily::BOLD);
     textY += titleHeight + gap;
   }
 
-  const char* subtitle = resolveText(card.subtitle);
+  const char* subtitle = card.subtitle;
   const int subtitleHeight = renderer.getLineHeight(SMALL_FONT_ID);
-  if (subtitle != nullptr && hasVerticalSpace(textY, subtitleHeight, contentBottom)) {
+  if (subtitle[0] != '\0' && hasVerticalSpace(textY, subtitleHeight, contentBottom)) {
     drawTruncatedText(renderer, SMALL_FONT_ID, textX, textY, subtitle, textWidth);
     textY += subtitleHeight + gap * 2;
   }
 
-  if (card.lines == nullptr) {
-    return;
-  }
-
   const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
   for (size_t i = 0; i < card.lineCount && hasVerticalSpace(textY, lineHeight, contentBottom); ++i) {
-    drawTruncatedText(renderer, UI_10_FONT_ID, textX, textY, resolveText(card.lines[i]), textWidth);
+    drawTruncatedText(renderer, UI_10_FONT_ID, textX, textY, card.lines[i], textWidth);
     textY += lineHeight + gap;
   }
 }

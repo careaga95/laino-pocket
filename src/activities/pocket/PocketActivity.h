@@ -7,7 +7,8 @@
 struct Rect;
 
 class PocketActivity final : public Activity {
-  pocket::CardSelection cardSelection{pocket::CARD_COUNT};
+  pocket::CardBundle cardBundle;
+  pocket::CardSelection cardSelection{0};
 
  public:
   explicit PocketActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
