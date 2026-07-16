@@ -494,18 +494,22 @@ class BoundedParser final {
 }  // namespace
 
 ParseResult parseCardBundle(const char* json, const size_t jsonLength, CardBundle& destination) {
-  if (json == nullptr || jsonLength == 0) return ParseResult::EmptyInput;
-  if (jsonLength > MAX_JSON_DOCUMENT_BYTES) return ParseResult::DocumentTooLarge;
+  const ParseResult validationResult = validateCardBundle(json, jsonLength);
+  if (validationResult != ParseResult::Success) return validationResult;
 
   // Both passes use identical schema and limits. Publication is expected to be infallible after validation;
   // adding destination-dependent parsing behavior would violate this atomicity guarantee.
-  BoundedParser validator(json, jsonLength, nullptr);
-  const ParseResult validationResult = validator.parseDocument();
-  if (validationResult != ParseResult::Success) return validationResult;
-
   destination = CardBundle{};
   BoundedParser publisher(json, jsonLength, &destination);
   return publisher.parseDocument();
+}
+
+ParseResult validateCardBundle(const char* json, const size_t jsonLength) {
+  if (json == nullptr || jsonLength == 0) return ParseResult::EmptyInput;
+  if (jsonLength > MAX_JSON_DOCUMENT_BYTES) return ParseResult::DocumentTooLarge;
+
+  BoundedParser validator(json, jsonLength, nullptr);
+  return validator.parseDocument();
 }
 
 const char* parseResultName(const ParseResult result) {
