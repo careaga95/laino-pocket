@@ -4,11 +4,11 @@
 #include <I18n.h>
 
 #include <algorithm>
-#include <iterator>
 
 #include "MappedInputManager.h"
+#include "PocketCard.h"
+#include "PocketCardRenderer.h"
 #include "components/UITheme.h"
-#include "fontIds.h"
 
 void PocketActivity::onEnter() {
   Activity::onEnter();
@@ -18,40 +18,20 @@ void PocketActivity::onEnter() {
 void PocketActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     onGoHome(HomeMenuItem::POCKET);
-  }
-}
-
-void PocketActivity::drawCard(const Rect rect) const {
-  if (rect.width <= 0 || rect.height <= 0) {
     return;
   }
 
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  const int padding = metrics.contentSidePadding;
-  const int textWidth = std::max(0, rect.width - padding * 2);
-  const int titleHeight = renderer.getLineHeight(UI_12_FONT_ID);
-  const int subtitleHeight = renderer.getLineHeight(SMALL_FONT_ID);
-  const int bulletHeight = renderer.getLineHeight(UI_10_FONT_ID);
-  const int gap = std::max(2, metrics.verticalSpacing);
-  const char* const bulletItems[] = {tr(STR_POCKET_REVIEW_PREMIUM), tr(STR_POCKET_CHECK_ENGINEERING),
-                                     tr(STR_POCKET_AGREE_STRATEGY)};
+  bool changed = false;
+  if (mappedInput.wasReleased(MappedInputManager::Button::NavPrevious)) {
+    RenderLock lock;
+    changed = cardSelection.selectPrevious();
+  } else if (mappedInput.wasReleased(MappedInputManager::Button::NavNext)) {
+    RenderLock lock;
+    changed = cardSelection.selectNext();
+  }
 
-  renderer.drawRect(rect.x, rect.y, rect.width, rect.height);
-
-  int textY = rect.y + padding;
-  const auto title =
-      renderer.truncatedText(UI_12_FONT_ID, tr(STR_POCKET_PREPARE_RENEWAL), textWidth, EpdFontFamily::BOLD);
-  renderer.drawText(UI_12_FONT_ID, rect.x + padding, textY, title.c_str(), true, EpdFontFamily::BOLD);
-
-  textY += titleHeight + gap;
-  const auto subtitle = renderer.truncatedText(SMALL_FONT_ID, tr(STR_POCKET_TODAY_TIME), textWidth);
-  renderer.drawText(SMALL_FONT_ID, rect.x + padding, textY, subtitle.c_str());
-
-  textY += subtitleHeight + gap * 2;
-  for (size_t i = 0; i < std::size(bulletItems) && textY + bulletHeight <= rect.y + rect.height - padding; ++i) {
-    const auto bullet = renderer.truncatedText(UI_10_FONT_ID, bulletItems[i], textWidth);
-    renderer.drawText(UI_10_FONT_ID, rect.x + padding, textY, bullet.c_str());
-    textY += bulletHeight + gap;
+  if (changed) {
+    requestUpdate();
   }
 }
 
@@ -75,16 +55,27 @@ void PocketActivity::render(RenderLock&&) {
   const int safeBottom = std::min(screenHeight - viewableBottom, hintSafeArea.y + hintSafeArea.height);
 
   const int headerY = std::max(safeTop, metrics.topPadding);
-  GUI.drawHeader(renderer, Rect{safeLeft, headerY, safeRight - safeLeft, metrics.headerHeight}, tr(STR_LAINO_POCKET));
+  const int headerWidth = std::max(0, safeRight - safeLeft);
+  if (headerWidth > 0 && metrics.headerHeight > 0) {
+    GUI.drawHeader(renderer, Rect{safeLeft, headerY, headerWidth, metrics.headerHeight}, tr(STR_LAINO_POCKET));
+  }
 
-  const int cardX = safeLeft + metrics.contentSidePadding;
+  // getScreenSafeArea() currently reserves front hints only, so Pocket keeps side-hint clearance local.
+  const int sideInset = std::max(metrics.contentSidePadding, metrics.sideButtonHintsWidth + metrics.verticalSpacing);
+  const int cardX = safeLeft + sideInset;
   const int cardY = headerY + metrics.headerHeight + metrics.verticalSpacing;
-  const int cardWidth = safeRight - safeLeft - metrics.contentSidePadding * 2;
-  const int cardHeight = safeBottom - cardY - metrics.verticalSpacing;
-  drawCard(Rect{cardX, cardY, cardWidth, cardHeight});
+  const int cardWidth = std::max(0, safeRight - safeLeft - sideInset * 2);
+  const int availableCardHeight = std::max(0, safeBottom - cardY - metrics.verticalSpacing);
+  const auto& card = pocket::cardAt(cardSelection.index());
+  const int cardHeight = std::min(availableCardHeight, pocket::preferredCardHeight(renderer, card));
+  pocket::drawCard(renderer, Rect{cardX, cardY, cardWidth, cardHeight}, card, cardSelection.index(),
+                   pocket::CARD_COUNT);
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+  const char* previousLabel = cardSelection.canSelectPrevious() ? tr(STR_POCKET_PREVIOUS) : "";
+  const char* nextLabel = cardSelection.canSelectNext() ? tr(STR_POCKET_NEXT) : "";
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", previousLabel, nextLabel);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  GUI.drawSideButtonHints(renderer, previousLabel, nextLabel);
 
   renderer.displayBuffer();
 }
