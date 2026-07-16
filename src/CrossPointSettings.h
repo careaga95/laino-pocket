@@ -200,6 +200,9 @@ class CrossPointSettings {
   // Set once an NTP sync succeeds. Used to skip re-syncing on every WiFi connect.
   // Resetting to 0 (e.g. via the web UI) forces a re-sync on next WiFi connect.
   uint8_t clockHasBeenSynced = 0;
+  // Version of the RTC data persisted by a successful NTP sync. Version 0 includes
+  // installations that only wrote time; version 1 confirms complete date and time.
+  uint8_t clockSyncDataVersion = 0;
   // Text rendering settings
   uint8_t extraParagraphSpacing = 1;
   uint8_t textAntiAliasing = 1;

@@ -6,6 +6,7 @@
 #include <Logging.h>
 #include <WiFi.h>
 
+#include "ClockSyncPolicy.h"
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "WifiCredentialStore.h"
@@ -247,9 +248,11 @@ void WifiSelectionActivity::checkConnectionStatus() {
     // Sync RTC from NTP on the first successful WiFi connection only. The DS3231
     // drifts ~2 ppm so one sync is enough; users can force a re-sync from
     // Settings > Customise Status Bar > Sync clock now.
-    if (halClock.isAvailable() && !SETTINGS.clockHasBeenSynced) {
+    if (halClock.isAvailable() &&
+        ClockSyncPolicy::shouldAutoSync(SETTINGS.clockHasBeenSynced, SETTINGS.clockSyncDataVersion)) {
       if (halClock.syncFromNTP()) {
         SETTINGS.clockHasBeenSynced = 1;
+        SETTINGS.clockSyncDataVersion = ClockSyncPolicy::markComplete(SETTINGS.clockSyncDataVersion);
         SETTINGS.saveToFile();
       }
     }
