@@ -58,7 +58,11 @@ else
 fi
 
 cmake -S "$BUILD_DIR/firmware/test" -B "$BUILD_DIR/build" >/dev/null
-cmake --build "$BUILD_DIR/build" --target PocketPairingPreflight --parallel >/dev/null
+cmake --build "$BUILD_DIR/build" --target PocketPairingPreflight PocketPairingTest --parallel >/dev/null
+
+"$BUILD_DIR/build/pocket_pairing/PocketPairingTest" \
+  --gtest_filter=PocketPairingClientTest.AcceptsThirtyTwoCharactersAndRejectsThirtyThreeBeforeTransport \
+  >/dev/null
 
 "$NODE20" "$BUILD_DIR/hari-harness/node_modules/tsx/dist/cli.mjs" \
   "$BUILD_DIR/hari-harness/scripts/pocket-pairing-cross-preflight.ts" \
