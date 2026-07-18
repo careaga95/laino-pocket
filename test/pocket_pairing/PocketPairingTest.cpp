@@ -20,6 +20,10 @@ constexpr char DEVICE_CODE[] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 constexpr char TOKEN[] = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
 constexpr char UUID[] = "00112233-4455-6677-8899-aabbccddeeff";
 
+pocket::PairingIdentity identityForFirmware(const char* firmware) {
+  return {pocket::PAIRING_PROTOCOL_VERSION, pocket::POCKET_DEVICE_MODEL, firmware};
+}
+
 pocket::PairingStartResponse validStart() {
   pocket::PairingStartResponse response{};
   std::memcpy(response.deviceCode, DEVICE_CODE, sizeof(DEVICE_CODE));
@@ -475,13 +479,66 @@ TEST(PocketPairingClientTest, StartUsesExactGatewayPathAndBoundedBody) {
   pocket::PairingStartResponse response{};
   std::atomic<bool> cancelled{false};
 
-  const auto outcome = client.start("1.4.1+2f6b79f", cancelled, response);
+  const auto outcome = client.start(identityForFirmware("1.4.1+2f6b79f"), cancelled, response);
 
   EXPECT_EQ(outcome.result, pocket::PocketClientResult::Success);
   EXPECT_EQ(gateway.method, pocket::GatewayMethod::Post);
   EXPECT_EQ(gateway.path, "/api/device/pocket/v1/pairing/start");
   EXPECT_EQ(gateway.path.find('?'), std::string::npos);
   EXPECT_LT(gateway.body.size(), 256U);
+}
+
+TEST(PocketPairingClientTest, AcceptsThirtyTwoCharactersAndRejectsThirtyThreeBeforeTransport) {
+  FakeGateway gateway;
+  gateway.json(200, std::string("{\"protocol\":1,\"device_code\":\"") + DEVICE_CODE +
+                        "\",\"user_code\":\"ABCDEFGH\",\"expires_in\":600,\"interval\":10,"
+                        "\"first_poll_after\":5}");
+  pocket::PairingClient client(gateway);
+  pocket::PairingStartResponse response{};
+  std::atomic<bool> cancelled{false};
+  constexpr char VALID_32[] = "12345678901234567890123456789012";
+  constexpr char INVALID_33[] = "123456789012345678901234567890123";
+
+  const auto accepted = client.start(identityForFirmware(VALID_32), cancelled, response);
+  EXPECT_EQ(accepted.result, pocket::PocketClientResult::Success);
+  EXPECT_EQ(gateway.calls, 1);
+
+  const auto rejected = client.start(identityForFirmware(INVALID_33), cancelled, response);
+  EXPECT_EQ(rejected.result, pocket::PocketClientResult::InvalidResponse);
+  EXPECT_EQ(rejected.localValidation, pocket::LocalValidationField::Firmware);
+  EXPECT_STREQ(pocket::localValidationFieldName(rejected.localValidation), "firmware");
+  EXPECT_EQ(gateway.calls, 1);
+}
+
+TEST(PocketPairingClientTest, CompiledIdentityIsBoundedAndReachesTransport) {
+  FakeGateway gateway;
+  gateway.json(200, std::string("{\"protocol\":1,\"device_code\":\"") + DEVICE_CODE +
+                        "\",\"user_code\":\"ABCDEFGH\",\"expires_in\":600,\"interval\":10,"
+                        "\"first_poll_after\":5}");
+  pocket::PairingClient client(gateway);
+  pocket::PairingStartResponse response{};
+  std::atomic<bool> cancelled{false};
+
+  static_assert(sizeof(pocket::POCKET_FIRMWARE_BUILD_ID) - 1 <= 32);
+  const auto outcome = client.start(pocket::COMPILED_PAIRING_IDENTITY, cancelled, response);
+
+  EXPECT_EQ(outcome.result, pocket::PocketClientResult::Success);
+  EXPECT_EQ(gateway.calls, 1);
+  EXPECT_NE(gateway.body.find(std::string("\"firmware\":\"") + pocket::POCKET_FIRMWARE_BUILD_ID + "\""),
+            std::string::npos);
+}
+
+TEST(PocketPairingClientTest, RejectsInvalidProtocolAndModelBeforeTransport) {
+  FakeGateway gateway;
+  pocket::PairingClient client(gateway);
+  pocket::PairingStartResponse response{};
+  std::atomic<bool> cancelled{false};
+
+  const auto protocol = client.start({2, pocket::POCKET_DEVICE_MODEL, "1.4.1+406b0d6"}, cancelled, response);
+  EXPECT_EQ(protocol.localValidation, pocket::LocalValidationField::Protocol);
+  const auto model = client.start({1, "other-model", "1.4.1+406b0d6"}, cancelled, response);
+  EXPECT_EQ(model.localValidation, pocket::LocalValidationField::Model);
+  EXPECT_EQ(gateway.calls, 0);
 }
 
 TEST(PocketPairingClientTest, DeviceCodeAndBearerNeverAppearInUrls) {
@@ -599,7 +656,8 @@ TEST(PocketPairingClientTest, RequiresEndpointSpecificSuccessStatuses) {
   gateway.json(201, std::string("{\"protocol\":1,\"device_code\":\"") + DEVICE_CODE +
                         "\",\"user_code\":\"ABCDEFGH\",\"expires_in\":600,\"interval\":10,"
                         "\"first_poll_after\":5}");
-  EXPECT_EQ(client.start("1.4.1", cancelled, start).result, pocket::PocketClientResult::InvalidResponse);
+  EXPECT_EQ(client.start(identityForFirmware("1.4.1"), cancelled, start).result,
+            pocket::PocketClientResult::InvalidResponse);
 
   pocket::PairingPollResponse poll{};
   gateway.json(202, "{\"protocol\":1,\"status\":\"pending\"}");

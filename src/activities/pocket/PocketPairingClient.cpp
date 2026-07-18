@@ -72,6 +72,13 @@ bool validAsciiField(const char* value) {
   return true;
 }
 
+PocketClientOutcome invalidLocalField(const LocalValidationField field) {
+  PocketClientOutcome outcome{};
+  outcome.result = PocketClientResult::InvalidResponse;
+  outcome.localValidation = field;
+  return outcome;
+}
+
 }  // namespace
 
 PocketClientOutcome PairingClient::execute(const GatewayRequest& request, const std::atomic<bool>& cancelled,
@@ -108,12 +115,17 @@ PocketClientOutcome PairingClient::classifyError(const GatewayResponse& response
   return outcome;
 }
 
-PocketClientOutcome PairingClient::start(const char* firmware, const std::atomic<bool>& cancelled,
+PocketClientOutcome PairingClient::start(const PairingIdentity& identity, const std::atomic<bool>& cancelled,
                                          PairingStartResponse& response) {
-  if (!validAsciiField(firmware)) return {PocketClientResult::InvalidResponse};
+  if (identity.protocol != PAIRING_PROTOCOL_VERSION) return invalidLocalField(LocalValidationField::Protocol);
+  if (!validAsciiField(identity.model) || std::strcmp(identity.model, POCKET_DEVICE_MODEL) != 0) {
+    return invalidLocalField(LocalValidationField::Model);
+  }
+  if (!validAsciiField(identity.firmware)) return invalidLocalField(LocalValidationField::Firmware);
   char body[128];
-  const int length =
-      std::snprintf(body, sizeof(body), "{\"protocol\":1,\"model\":\"xteink-x3\",\"firmware\":\"%s\"}", firmware);
+  const int length = std::snprintf(body, sizeof(body),
+                                   "{\"protocol\":%u,\"model\":\"%s\",\"firmware\":\"%s\"}",
+                                   static_cast<unsigned int>(identity.protocol), identity.model, identity.firmware);
   if (length <= 0 || static_cast<std::size_t>(length) >= sizeof(body)) return {PocketClientResult::InvalidResponse};
   GatewayResponse gateway{};
   const GatewayRequest request{GatewayMethod::Post, START_PATH, body, static_cast<std::size_t>(length), nullptr};
@@ -291,6 +303,20 @@ const char* gatewayTransportResultName(const GatewayTransportResult result) {
       return "oversized_response";
     case GatewayTransportResult::ReadFailure:
       return "read_failure";
+  }
+  return "unknown";
+}
+
+const char* localValidationFieldName(const LocalValidationField field) {
+  switch (field) {
+    case LocalValidationField::None:
+      return "none";
+    case LocalValidationField::Protocol:
+      return "protocol";
+    case LocalValidationField::Model:
+      return "model";
+    case LocalValidationField::Firmware:
+      return "firmware";
   }
   return "unknown";
 }

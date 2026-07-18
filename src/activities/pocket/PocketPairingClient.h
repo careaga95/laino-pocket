@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include "PocketPairingProtocol.h"
+#include "PocketFirmwareIdentity.h"
 
 namespace pocket {
 
@@ -71,6 +72,8 @@ enum class PocketClientResult : uint8_t {
   HttpFailure,
 };
 
+enum class LocalValidationField : uint8_t { None, Protocol, Model, Firmware };
+
 struct PocketClientOutcome {
   PocketClientResult result = PocketClientResult::TransportFailure;
   int16_t httpStatus = 0;
@@ -79,13 +82,15 @@ struct PocketClientOutcome {
   uint32_t elapsedMs = 0;
   int32_t transportError = 0;
   char error[33]{};
+  LocalValidationField localValidation = LocalValidationField::None;
 };
 
 class PairingClient {
  public:
   explicit PairingClient(PocketGatewayTransport& transport) : transport(transport) {}
 
-  PocketClientOutcome start(const char* firmware, const std::atomic<bool>& cancelled, PairingStartResponse& response);
+  PocketClientOutcome start(const PairingIdentity& identity, const std::atomic<bool>& cancelled,
+                            PairingStartResponse& response);
   PocketClientOutcome poll(const char* deviceCode, const std::atomic<bool>& cancelled, PairingPollResponse& response);
   PocketClientOutcome finalize(const char* deviceCode, bool confirm, const std::atomic<bool>& cancelled,
                                PairingFinalizeResponse& response);
@@ -101,5 +106,6 @@ class PairingClient {
 
 const char* pocketClientResultName(PocketClientResult result);
 const char* gatewayTransportResultName(GatewayTransportResult result);
+const char* localValidationFieldName(LocalValidationField field);
 
 }  // namespace pocket

@@ -104,7 +104,8 @@ void PocketPairingActivity::runWorker(pocket::PairingWorkerContext* context) {
     pocket::PairingClient client(gateway);
     switch (context->operation) {
       case pocket::WorkerOperation::Start:
-        context->outcome = client.start(CROSSPOINT_VERSION, context->cancelled, context->startResponse);
+        context->outcome =
+            client.start(pocket::COMPILED_PAIRING_IDENTITY, context->cancelled, context->startResponse);
         break;
       case pocket::WorkerOperation::Poll:
         context->outcome =
@@ -320,11 +321,16 @@ void PocketPairingActivity::processWorkerResult() {
   const pocket::WorkerOperation completed = workerOperation;
   workerOperation = pocket::WorkerOperation::None;
 
-  LOG_INF("PAIR", "op=%s result=%s http=%d transport=%s elapsed=%lu error=%ld stack_free=%lu",
-          workerOperationName(completed), pocket::pocketClientResultName(workerOutcome.result),
-          workerOutcome.httpStatus, pocket::gatewayTransportResultName(workerOutcome.transport),
-          static_cast<unsigned long>(workerOutcome.elapsedMs), static_cast<long>(workerOutcome.transportError),
-          static_cast<unsigned long>(workerStackMargin));
+  if (workerOutcome.localValidation != pocket::LocalValidationField::None) {
+    LOG_INF("PAIR", "local_validation=%s",
+            pocket::localValidationFieldName(workerOutcome.localValidation));
+  } else {
+    LOG_INF("PAIR", "op=%s result=%s http=%d transport=%s elapsed=%lu error=%ld stack_free=%lu",
+            workerOperationName(completed), pocket::pocketClientResultName(workerOutcome.result),
+            workerOutcome.httpStatus, pocket::gatewayTransportResultName(workerOutcome.transport),
+            static_cast<unsigned long>(workerOutcome.elapsedMs), static_cast<long>(workerOutcome.transportError),
+            static_cast<unsigned long>(workerStackMargin));
+  }
   if (workerStackMargin < 1024) LOG_ERR("PAIR", "Network worker stack margin below protocol minimum");
 
   if (exitAfterCancellation) {
