@@ -748,6 +748,13 @@ TEST(PocketPairingTransportPolicyTest, RejectsRedirectAmbiguousFramingOversizeAn
   EXPECT_EQ(pocket::validateResponseEnvelope(envelope), pocket::GatewayTransportResult::Success);
 }
 
+TEST(PocketPairingTransportPolicyTest, AllowsBoundedCloudflareResponseMetadataLines) {
+  // Cloudflare Report-To lines observed in production reached 260 bytes. The
+  // transport still applies the independent 8 KiB aggregate metadata limit.
+  EXPECT_GE(pocket::POCKET_MAX_RESPONSE_LINE_BYTES, 512U);
+  EXPECT_LT(pocket::POCKET_MAX_RESPONSE_LINE_BYTES, 8192U);
+}
+
 TEST(PocketPairingLoggingTest, LogStatementsNeverInterpolatePairingSecrets) {
   std::ifstream input(PAIRING_ACTIVITY_SOURCE);
   ASSERT_TRUE(input.is_open());

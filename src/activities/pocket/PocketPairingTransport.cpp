@@ -27,7 +27,6 @@ constexpr int32_t CONNECT_TIMEOUT_MS = 4000;
 constexpr uint32_t TLS_HANDSHAKE_TIMEOUT_SECONDS = 5;
 constexpr uint32_t RESPONSE_IO_TIMEOUT_MS = 4000;
 constexpr std::size_t MAX_METADATA_BYTES = 8192;
-constexpr std::size_t MAX_LINE_BYTES = 256;
 constexpr uint32_t MIN_TLS_HEAP_BYTES = 55000;
 constexpr int32_t ERROR_MALFORMED = -21001;
 constexpr int32_t ERROR_DNS_DISPATCH = -21002;
@@ -383,7 +382,7 @@ class RequestSession {
   }
 
   void readResponse() {
-    char line[MAX_LINE_BYTES];
+    char line[POCKET_MAX_RESPONSE_LINE_BYTES];
     std::size_t length = 0;
     IoStatus io = readLine(line, sizeof(line), length);
     if (io != IoStatus::Ok) return failForIo(io);
@@ -467,7 +466,7 @@ class RequestSession {
       if (status != IoStatus::Ok) return status;
       chunkNeedsCrlf = false;
     }
-    char line[MAX_LINE_BYTES];
+    char line[POCKET_MAX_RESPONSE_LINE_BYTES];
     std::size_t length = 0;
     IoStatus status = readLine(line, sizeof(line), length);
     if (status != IoStatus::Ok) return status;

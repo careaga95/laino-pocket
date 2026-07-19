@@ -1,10 +1,15 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 #include "PocketPairingClient.h"
 
 namespace pocket {
+
+// Cloudflare's dynamic Report-To header can exceed 256 bytes. Keep the
+// per-line bound finite while leaving enough room for edge-generated metadata.
+inline constexpr std::size_t POCKET_MAX_RESPONSE_LINE_BYTES = 512;
 
 inline constexpr uint32_t POCKET_TOTAL_REQUEST_TIMEOUT_MS = 13000;
 inline constexpr uint32_t POCKET_MAX_RESPONSE_BODY_BYTES = 1024;
