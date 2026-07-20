@@ -555,6 +555,9 @@ void loop() {
 
   if (millis() >= allowSleepAt && gpio.isPressed(HalGPIO::BTN_POWER) &&
       gpio.getPowerButtonHeldTime() > SETTINGS.getPowerButtonDuration()) {
+    // Active network Activities use this same guard for both automatic and manual sleep;
+    // they must first receive their worker's cancellation/teardown acknowledgement.
+    if (activityManager.preventAutoSleep()) return;
     // If the screenshot combination is potentially being pressed, don't sleep
     if (gpio.isPressed(HalGPIO::BTN_DOWN)) {
       return;

@@ -12,7 +12,7 @@
 #include "PocketCard.h"
 #include "PocketCardFixture.h"
 #include "PocketCardRenderer.h"
-#include "PocketHttpsProbeActivity.h"
+#include "PocketPairingActivity.h"
 #include "components/UITheme.h"
 
 void PocketActivity::onEnter() {
@@ -37,9 +37,9 @@ void PocketActivity::loop() {
     return;
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    auto activity = makeUniqueNoThrow<PocketHttpsProbeActivity>(renderer, mappedInput);
+    auto activity = makeUniqueNoThrow<PocketPairingActivity>(renderer, mappedInput);
     if (!activity) {
-      LOG_ERR("PKT", "OOM: PocketHttpsProbeActivity");
+      LOG_ERR("PKT", "OOM: PocketPairingActivity");
       return;
     }
     startActivityForResult(std::move(activity), [](const ActivityResult&) {});
@@ -98,7 +98,7 @@ void PocketActivity::render(RenderLock&&) {
 
   const char* previousLabel = cardSelection.canSelectPrevious() ? tr(STR_POCKET_PREVIOUS) : "";
   const char* nextLabel = cardSelection.canSelectNext() ? tr(STR_POCKET_NEXT) : "";
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_POCKET_TEST_HTTPS), previousLabel, nextLabel);
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_POCKET_HARI), previousLabel, nextLabel);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   GUI.drawSideButtonHints(renderer, previousLabel, nextLabel);
 

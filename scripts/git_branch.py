@@ -1,9 +1,11 @@
 """
-PlatformIO pre-build script: inject git branch and short SHA into
-CROSSPOINT_VERSION for the default (dev) environment.
+PlatformIO pre-build script: inject build identifiers for the default (dev)
+environment.
 
-Results in a version string like:  1.1.0-dev-feat-kosync-xpath-05c6cf8
-Release environments are unaffected; they set CROSSPOINT_VERSION in the ini.
+The user-facing CROSSPOINT_VERSION keeps the descriptive branch suffix. Pocket
+pairing uses the separate, bounded POCKET_FIRMWARE_ID (for example,
+1.4.1+05c6cf8) because the wire contract permits at most 32 ASCII characters.
+Release environments are unaffected; they set both values in the ini.
 """
 
 import configparser
@@ -59,7 +61,7 @@ def get_git_branch(project_dir):
 
 def get_git_short_sha(project_dir):
     return run_git_value(
-        project_dir, ['rev-parse', '--short', 'HEAD'], 'short SHA'
+        project_dir, ['rev-parse', '--short=7', 'HEAD'], 'short SHA'
     )
 
 
@@ -87,9 +89,21 @@ def inject_version(env):
     branch = get_git_branch(project_dir)
     short_sha = get_git_short_sha(project_dir)
     version_string = f'{base_version}-dev-{branch}-{short_sha}'
+    pocket_firmware_id = f'{base_version}+{short_sha}'
 
-    env.Append(CPPDEFINES=[('CROSSPOINT_VERSION', f'\\"{version_string}\\"')])
+    if short_sha == 'unknown':
+        raise RuntimeError('Pocket firmware ID requires an exact Git commit')
+    if not pocket_firmware_id.isascii() or len(pocket_firmware_id) > 32:
+        raise RuntimeError('Pocket firmware ID must be at most 32 ASCII characters')
+    if any(c.isspace() for c in pocket_firmware_id):
+        raise RuntimeError('Pocket firmware ID must not contain whitespace')
+
+    env.Append(CPPDEFINES=[
+        ('CROSSPOINT_VERSION', f'\\"{version_string}\\"'),
+        ('POCKET_FIRMWARE_ID', f'\\"{pocket_firmware_id}\\"'),
+    ])
     print(f'CrossPoint build version: {version_string}')
+    print(f'Pocket firmware ID: {pocket_firmware_id}')
 
 
 # PlatformIO/SCons entry point — Import and env are SCons builtins injected at runtime.
