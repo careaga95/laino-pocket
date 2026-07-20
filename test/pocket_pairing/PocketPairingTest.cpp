@@ -407,6 +407,18 @@ TEST(PocketPairingMachineTest, RetryAfterIsClampedToFiveAndThirtySeconds) {
   EXPECT_TRUE(machine.pollDue(40000));
 }
 
+TEST(PocketPairingMachineTest, PendingPollWaitsFullIntervalAfterResponseCompletes) {
+  pocket::PairingMachine machine;
+  machine.startSucceeded(validStart(), 1000);
+  ASSERT_TRUE(machine.pollDue(6000));
+
+  machine.pollStarted(6000);
+  machine.pollPending(9000);
+
+  EXPECT_FALSE(machine.pollDue(18999));
+  EXPECT_TRUE(machine.pollDue(19000));
+}
+
 TEST(PocketPairingMachineTest, ConsumedAndRevokedHaveDedicatedRecoveryStates) {
   pocket::PairingMachine machine;
   machine.finalizeConsumed();
@@ -787,4 +799,21 @@ TEST(PocketPairingRenderingTest, UnpairWarningIsWrappedInsideTheDisplayInsteadOf
   EXPECT_NE(renderCase.find("renderer.getScreenWidth() - 40"), std::string::npos);
   EXPECT_NE(renderCase.find("std::replace(warning.begin(), warning.end(), '\\n', ' ')"), std::string::npos);
   EXPECT_NE(renderCase.find("for (const auto& wrappedLine : lines)"), std::string::npos);
+}
+
+TEST(PocketPairingInteractionTest, UnpairConfirmationConnectsBeforeRemoteDelete) {
+  std::ifstream input(PAIRING_ACTIVITY_SOURCE);
+  ASSERT_TRUE(input.is_open());
+  const std::string source((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+  const std::size_t handler = source.find("void PocketPairingActivity::handleConfirm");
+  ASSERT_NE(handler, std::string::npos);
+  const std::size_t state = source.find("case pocket::PairingState::UnpairConfirm:", handler);
+  ASSERT_NE(state, std::string::npos);
+  const std::size_t stateEnd = source.find("break;", state);
+  ASSERT_NE(stateEnd, std::string::npos);
+  const std::string confirmCase = source.substr(state, stateEnd - state);
+
+  EXPECT_NE(confirmCase.find("requestOperationWithWifi(pocket::WorkerOperation::DeleteSelf)"),
+            std::string::npos);
+  EXPECT_EQ(confirmCase.find("credentialStore.clear()"), std::string::npos);
 }

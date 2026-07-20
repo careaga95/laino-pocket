@@ -619,7 +619,10 @@ void PairingMachine::pollStarted(const uint32_t now) {
   retryDelayActive = false;
 }
 
-void PairingMachine::pollPending() { failures = 0; }
+void PairingMachine::pollPending(const uint32_t now) {
+  failures = 0;
+  lastPollAt = now;
+}
 
 void PairingMachine::pollClaimed() {
   failures = 0;

@@ -100,7 +100,7 @@ class PairingMachine {
   [[nodiscard]] bool expired(uint32_t now) const;
   [[nodiscard]] uint16_t secondsRemaining(uint32_t now) const;
   void pollStarted(uint32_t now);
-  void pollPending();
+  void pollPending(uint32_t now);
   void pollClaimed();
   void pollRateLimited(uint8_t retryAfterSeconds, uint32_t now);
   void pollTransportFailed(uint32_t now);

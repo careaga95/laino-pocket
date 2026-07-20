@@ -356,7 +356,7 @@ void PocketPairingActivity::processWorkerResult() {
       break;
     case pocket::WorkerOperation::Poll:
       if (workerOutcome.result == pocket::PocketClientResult::Pending) {
-        machine.pollPending();
+        machine.pollPending(millis());
       } else if (workerOutcome.result == pocket::PocketClientResult::Claimed) {
         machine.pollClaimed();
       } else if (workerOutcome.result == pocket::PocketClientResult::RateLimited) {
@@ -492,20 +492,8 @@ void PocketPairingActivity::handleConfirm() {
       requestOperationWithWifi(pocket::WorkerOperation::Verify);
       break;
     case pocket::PairingState::UnpairConfirm:
-      if (wifiConnected()) {
-        offerLocalOnlyUnpair = false;
-        requestOperationWithWifi(pocket::WorkerOperation::DeleteSelf);
-      } else if (credentialStore.clear()) {
-        clearCredentialRam();
-        credentialPresent = false;
-        unpairNotice = UnpairNotice::LocalOnly;
-        machine.unpairSucceeded();
-        requestUpdate();
-      } else {
-        storageOperation = StorageOperation::ClearCredential;
-        machine.credentialSaved(false);
-        requestUpdate();
-      }
+      offerLocalOnlyUnpair = false;
+      requestOperationWithWifi(pocket::WorkerOperation::DeleteSelf);
       break;
     case pocket::PairingState::ErrorRetry:
       retryLastOperation();
