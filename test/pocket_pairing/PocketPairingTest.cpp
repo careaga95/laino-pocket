@@ -770,3 +770,21 @@ TEST(PocketPairingLoggingTest, LogStatementsNeverInterpolatePairingSecrets) {
     position = end + 2;
   }
 }
+
+TEST(PocketPairingRenderingTest, UnpairWarningIsWrappedInsideTheDisplayInsteadOfDrawnAsOneLine) {
+  std::ifstream input(PAIRING_ACTIVITY_SOURCE);
+  ASSERT_TRUE(input.is_open());
+  const std::string source((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+  const std::size_t drawStateBody = source.find("void PocketPairingActivity::drawStateBody");
+  ASSERT_NE(drawStateBody, std::string::npos);
+  const std::size_t state = source.find("case pocket::PairingState::UnpairConfirm:", drawStateBody);
+  ASSERT_NE(state, std::string::npos);
+  const std::size_t stateEnd = source.find("break;", state);
+  ASSERT_NE(stateEnd, std::string::npos);
+  const std::string renderCase = source.substr(state, stateEnd - state);
+
+  EXPECT_NE(renderCase.find("renderer.wrappedText"), std::string::npos);
+  EXPECT_NE(renderCase.find("renderer.getScreenWidth() - 40"), std::string::npos);
+  EXPECT_NE(renderCase.find("std::replace(warning.begin(), warning.end(), '\\n', ' ')"), std::string::npos);
+  EXPECT_NE(renderCase.find("for (const auto& wrappedLine : lines)"), std::string::npos);
+}

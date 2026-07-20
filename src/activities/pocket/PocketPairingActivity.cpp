@@ -695,9 +695,18 @@ void PocketPairingActivity::drawStateBody(const int midY) {
     }
     case pocket::PairingState::UnpairConfirm:
       renderer.drawCenteredText(UI_12_FONT_ID, midY - 55, tr(STR_POCKET_UNPAIR_QUESTION), true, EpdFontFamily::BOLD);
-      renderer.drawCenteredText(
-          UI_10_FONT_ID, midY,
-          wifiConnected() ? tr(STR_POCKET_UNPAIR_ONLINE_WARNING) : tr(STR_POCKET_UNPAIR_OFFLINE_WARNING), true);
+      {
+        std::string warning =
+            wifiConnected() ? tr(STR_POCKET_UNPAIR_ONLINE_WARNING) : tr(STR_POCKET_UNPAIR_OFFLINE_WARNING);
+        std::replace(warning.begin(), warning.end(), '\n', ' ');
+        const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+        const auto lines = renderer.wrappedText(UI_10_FONT_ID, warning.c_str(), renderer.getScreenWidth() - 40, 3);
+        int warningY = midY - (static_cast<int>(lines.size()) - 1) * lineHeight / 2;
+        for (const auto& wrappedLine : lines) {
+          renderer.drawCenteredText(UI_10_FONT_ID, warningY, wrappedLine.c_str(), true);
+          warningY += lineHeight;
+        }
+      }
       break;
     case pocket::PairingState::Unpairing:
       renderer.drawCenteredText(UI_12_FONT_ID, midY, tr(STR_POCKET_UNPAIRING));
