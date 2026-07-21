@@ -1,29 +1,51 @@
 #include "PocketActivity.h"
 
 #include <GfxRenderer.h>
+#include <HalClock.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
 #include <WiFi.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <new>
+#include <string>
 
 #include "MappedInputManager.h"
-#include "PocketBundleRuntime.h"
-#include "PocketCard.h"
-#include "PocketCardFixture.h"
-#include "PocketCardRenderer.h"
 #include "PocketPairingActivity.h"
 #include "PocketPairingTransport.h"
+#include "PocketSnapshotParser.h"
+#include "PocketText.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
+#include "fontIds.h"
 
 namespace {
 
 constexpr unsigned long LONG_PRESS_MS = 1000;
 
 bool wifiConnected() { return WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0); }
+
+uint64_t unixEpoch(const ClockDateTime& value) {
+  auto leap = [](const uint16_t year) { return (year % 4 == 0 && year % 100 != 0) || year % 400 == 0; };
+  constexpr uint8_t monthDays[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  uint64_t days = 0;
+  for (uint16_t year = 1970; year < value.year; ++year) days += leap(year) ? 366 : 365;
+  for (uint8_t month = 1; month < value.month; ++month) {
+    days += monthDays[month - 1] + (month == 2 && leap(value.year) ? 1 : 0);
+  }
+  days += value.day - 1;
+  return days * 86400ULL + value.hour * 3600ULL + value.minute * 60ULL + value.second;
+}
+
+void drawFitted(const GfxRenderer& renderer, const int font, const int x, const int y, const char* value,
+                const int width, const EpdFontFamily::Style style = EpdFontFamily::REGULAR) {
+  char buffer[160];
+  const char* fitted = pocket::truncateToWidth(
+      value, width, buffer, [&](const char* candidate) { return renderer.getTextWidth(font, candidate, style); });
+  renderer.drawText(font, x, y, fitted, true, style);
+}
 
 }  // namespace
 
@@ -39,17 +61,18 @@ PocketActivity::~PocketActivity() {
 
 void PocketActivity::onEnter() {
   Activity::onEnter();
-  const pocket::BundleLoadOutcome outcome =
-      pocket::loadPocketBundle(cache, pocket::COMPILED_CARD_JSON, pocket::COMPILED_CARD_JSON_LENGTH, cardBundle);
-  if (outcome.source == pocket::BundleSource::Cache) {
-    LOG_DBG("PKT", "source=%s slot=%s generation=%llu", pocket::bundleSourceName(outcome.source),
-            pocket::cacheSlotName(outcome.cacheLoad.slot),
-            static_cast<unsigned long long>(outcome.cacheLoad.generation));
+  const pocket::CacheOutcome outcome = cache.loadBest(snapshot);
+  if (outcome.result == pocket::CacheResult::Success) {
+    LOG_DBG("PKT", "snapshot slot=%s generation=%llu items=%u", pocket::cacheSlotName(outcome.slot),
+            static_cast<unsigned long long>(outcome.generation), static_cast<unsigned>(snapshot.itemCount));
   } else {
-    LOG_DBG("PKT", "source=%s cache=%s seed=%s", pocket::bundleSourceName(outcome.source),
-            pocket::cacheResultName(outcome.cacheLoad.result), pocket::cacheResultName(outcome.seed.result));
+    pocket::loadEmptySnapshot(snapshot);
+    LOG_INF("PKT", "No valid v2 snapshot cache result=%s", pocket::cacheResultName(outcome.result));
   }
-  cardSelection.setCardCount(cardBundle.cardCount);
+  view = View::Today;
+  todaySelection = 0;
+  sectionIndex = 0;
+  itemIndex = 0;
   reloadCredential();
   requestUpdate();
 }
@@ -127,6 +150,7 @@ void PocketActivity::onWifiSelectionComplete(const bool connected) {
 void PocketActivity::workerTrampoline(void* context) { runWorker(static_cast<pocket::BundleWorkerContext*>(context)); }
 
 void PocketActivity::runWorker(pocket::BundleWorkerContext* context) {
+  context->freeHeapBefore = ESP.getFreeHeap();
   {
     pocket::Esp32PocketGatewayTransport gateway;
     pocket::PairingClient client(gateway);
@@ -136,12 +160,14 @@ void PocketActivity::runWorker(pocket::BundleWorkerContext* context) {
       context->outcome = {pocket::PocketClientResult::InvalidResponse};
     } else {
       std::size_t jsonLength = 0;
-      context->outcome = client.bundle(bearer, context->cancelled, context->json, sizeof(context->json), jsonLength);
+      context->outcome = client.snapshot(bearer, context->cancelled, context->json, sizeof(context->json), jsonLength);
       context->jsonLength = static_cast<uint16_t>(jsonLength);
     }
     pocket::secureClear(bearer, sizeof(bearer));
   }
   context->stackMargin = static_cast<uint32_t>(uxTaskGetStackHighWaterMark(nullptr));
+  context->freeHeapAfter = ESP.getFreeHeap();
+  context->minimumFreeHeap = ESP.getMinFreeHeap();
   context->lifecycle.release();
   context->releaseReference();
   vTaskDelete(nullptr);
@@ -149,8 +175,7 @@ void PocketActivity::runWorker(pocket::BundleWorkerContext* context) {
 
 bool PocketActivity::startWorker() {
   if (workerRunning || workerContext != nullptr || !canSync()) return false;
-  // This bounded 4 KiB response belongs on transient heap: the ESP32-C3 stack is too small and steady-state
-  // activity RAM should not permanently duplicate PocketBundleCache's buffer.
+  // The bounded v2 response belongs on transient heap: the ESP32-C3 stack is too small for the JSON payload.
   workerContext = new (std::nothrow) pocket::BundleWorkerContext();
   if (workerContext == nullptr) {
     LOG_ERR("PKT", "Failed to allocate bundle sync context");
@@ -192,13 +217,20 @@ void PocketActivity::processWorkerResult() {
   } else if (outcome.result == pocket::PocketClientResult::Success) {
     const pocket::CacheOutcome stored = cache.store(workerContext->json, workerContext->jsonLength);
     const pocket::CacheOutcome loaded =
-        stored.result == pocket::CacheResult::Success ? cache.loadBest(cardBundle) : stored;
+        stored.result == pocket::CacheResult::Success ? cache.loadBest(snapshot) : stored;
     if (stored.result == pocket::CacheResult::Success && loaded.result == pocket::CacheResult::Success) {
-      cardSelection.setCardCount(cardBundle.cardCount);
+      view = View::Today;
+      todaySelection = 0;
+      sectionIndex = 0;
+      itemIndex = 0;
       syncNotice = SyncNotice::Updated;
-      LOG_INF("PKT", "Bundle sync stored slot=%s generation=%llu cards=%u stack_margin=%lu",
+      LOG_INF("PKT",
+              "Snapshot sync stored slot=%s generation=%llu items=%u bytes=%u stack_margin=%lu heap=%lu/%lu min=%lu",
               pocket::cacheSlotName(stored.slot), static_cast<unsigned long long>(stored.generation),
-              static_cast<unsigned>(cardBundle.cardCount), static_cast<unsigned long>(workerStackMargin));
+              static_cast<unsigned>(snapshot.itemCount), static_cast<unsigned>(workerContext->jsonLength),
+              static_cast<unsigned long>(workerStackMargin), static_cast<unsigned long>(workerContext->freeHeapBefore),
+              static_cast<unsigned long>(workerContext->freeHeapAfter),
+              static_cast<unsigned long>(workerContext->minimumFreeHeap));
     } else {
       syncNotice = SyncNotice::Failed;
       LOG_ERR("PKT", "Bundle cache update failed store=%s load=%s", pocket::cacheResultName(stored.result),
@@ -250,18 +282,8 @@ void PocketActivity::loop() {
     return;
   }
 
-  if (canSync() && mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
-      mappedInput.getHeldTime() >= LONG_PRESS_MS) {
+  if (mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MS) {
     longPressFired = true;
-    openHari();
-    return;
-  }
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    onGoHome(HomeMenuItem::POCKET);
-    return;
-  }
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (canSync())
       requestSync();
     else
@@ -269,16 +291,76 @@ void PocketActivity::loop() {
     return;
   }
 
-  bool changed = false;
-  if (mappedInput.wasReleased(MappedInputManager::Button::NavPrevious)) {
-    RenderLock lock;
-    changed = cardSelection.selectPrevious();
-  } else if (mappedInput.wasReleased(MappedInputManager::Button::NavNext)) {
-    RenderLock lock;
-    changed = cardSelection.selectNext();
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    goBack();
+    return;
+  }
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (!canSync())
+      openHari();
+    else
+      openSelection();
+    return;
   }
 
-  if (changed) requestUpdate();
+  if (mappedInput.wasReleased(MappedInputManager::Button::NavPrevious)) {
+    RenderLock lock;
+    moveSelection(-1);
+  } else if (mappedInput.wasReleased(MappedInputManager::Button::NavNext)) {
+    RenderLock lock;
+    moveSelection(1);
+  } else {
+    return;
+  }
+  requestUpdate();
+}
+
+const pocket::SnapshotSection* PocketActivity::selectedSection() const {
+  return snapshot.sectionAt(view == View::Today ? todaySelection : sectionIndex);
+}
+
+const pocket::SnapshotItem* PocketActivity::selectedItem() const {
+  const auto* section = selectedSection();
+  return section == nullptr ? nullptr : snapshot.itemAt(*section, itemIndex);
+}
+
+void PocketActivity::moveSelection(const int delta) {
+  if (view == View::Detail) return;
+  size_t& selection = view == View::Today ? todaySelection : itemIndex;
+  const auto* section = selectedSection();
+  const size_t count = view == View::Today ? snapshot.sectionCount : section == nullptr ? 0 : section->itemCount;
+  if (delta < 0 && selection > 0)
+    --selection;
+  else if (delta > 0 && selection + 1 < count)
+    ++selection;
+}
+
+void PocketActivity::openSelection() {
+  if (view == View::Today) {
+    const auto* section = selectedSection();
+    if (section == nullptr) return;
+    sectionIndex = todaySelection;
+    itemIndex = 0;
+    view = View::Section;
+  } else if (view == View::Section && selectedItem() != nullptr) {
+    view = View::Detail;
+  } else {
+    return;
+  }
+  requestUpdate();
+}
+
+void PocketActivity::goBack() {
+  if (view == View::Detail) {
+    view = View::Section;
+    requestUpdate();
+  } else if (view == View::Section) {
+    todaySelection = sectionIndex;
+    view = View::Today;
+    requestUpdate();
+  } else {
+    onGoHome(HomeMenuItem::POCKET);
+  }
 }
 
 const char* PocketActivity::headerLabel() const {
@@ -295,6 +377,89 @@ const char* PocketActivity::headerLabel() const {
       return tr(STR_LAINO_POCKET);
   }
   return tr(STR_LAINO_POCKET);
+}
+
+void PocketActivity::formatFreshness(char* buffer, const size_t capacity) const {
+  if (capacity == 0) return;
+  if (snapshot.fixture || snapshot.generatedAtEpoch == 0) {
+    std::snprintf(buffer, capacity, "%s", tr(STR_POCKET_NOT_SYNCED_HINT));
+    return;
+  }
+  ClockDateTime current;
+  const auto result = halClock.getDateTimeUtc(current);
+  if (result != HalClock::ReadResult::Fresh && result != HalClock::ReadResult::Cached) {
+    std::snprintf(buffer, capacity, tr(STR_POCKET_TIME_UNAVAILABLE_FORMAT),
+                  pocket::snapshotHasPartialSource(snapshot) ? tr(STR_POCKET_PARTIAL)
+                                                             : tr(STR_POCKET_SAVED_OFFLINE));
+    return;
+  }
+  const uint64_t now = unixEpoch(current);
+  const uint64_t ageMinutes = now > snapshot.generatedAtEpoch ? (now - snapshot.generatedAtEpoch) / 60ULL : 0;
+  const char* state = pocket::snapshotHasPartialSource(snapshot)
+                          ? tr(STR_POCKET_PARTIAL)
+                          : ageMinutes >= 120 ? tr(STR_POCKET_STALE) : tr(STR_POCKET_UPDATED);
+  if (ageMinutes < 60)
+    std::snprintf(buffer, capacity, tr(STR_POCKET_FRESH_MINUTES_FORMAT), state,
+                  static_cast<unsigned long long>(ageMinutes));
+  else
+    std::snprintf(buffer, capacity, tr(STR_POCKET_FRESH_HOURS_FORMAT), state,
+                  static_cast<unsigned long long>(ageMinutes / 60ULL));
+}
+
+void PocketActivity::renderToday(const Rect& content) {
+  GUI.drawList(
+      renderer, content, snapshot.sectionCount, static_cast<int>(todaySelection),
+      [this](const int index) -> std::string {
+        const auto* section = snapshot.sectionAt(index);
+        return section == nullptr ? "" : section->label;
+      },
+      [this](const int index) -> std::string {
+        const auto* section = snapshot.sectionAt(index);
+        const auto* first = section == nullptr ? nullptr : snapshot.itemAt(*section, 0);
+        return first == nullptr ? tr(STR_POCKET_NOTHING_OPEN) : first->title;
+      },
+      nullptr,
+      [this](const int index) -> std::string {
+        const auto* section = snapshot.sectionAt(index);
+        return section == nullptr ? "" : std::to_string(section->total);
+      },
+      false);
+}
+
+void PocketActivity::renderSection(const Rect& content) {
+  const auto* section = selectedSection();
+  if (section == nullptr || section->itemCount == 0) {
+    UITheme::drawCenteredText(renderer, content, UI_10_FONT_ID, content.y + content.height / 2,
+                              tr(STR_POCKET_NOTHING_OPEN), true);
+    return;
+  }
+  GUI.drawList(
+      renderer, content, section->itemCount, static_cast<int>(itemIndex),
+      [this, section](const int index) -> std::string {
+        const auto* item = snapshot.itemAt(*section, index);
+        return item == nullptr ? "" : item->title;
+      },
+      [this, section](const int index) -> std::string {
+        const auto* item = snapshot.itemAt(*section, index);
+        return item == nullptr ? "" : item->subtitle;
+      });
+}
+
+void PocketActivity::renderDetail(const Rect& content) {
+  const auto* item = selectedItem();
+  if (item == nullptr) return;
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int x = content.x + metrics.contentSidePadding;
+  const int width = content.width - metrics.contentSidePadding * 2;
+  int y = content.y + metrics.verticalSpacing;
+  drawFitted(renderer, UI_12_FONT_ID, x, y, item->title, width, EpdFontFamily::BOLD);
+  y += renderer.getLineHeight(UI_12_FONT_ID) + metrics.verticalSpacing;
+  drawFitted(renderer, UI_10_FONT_ID, x, y, item->subtitle, width);
+  y += renderer.getLineHeight(UI_10_FONT_ID) + metrics.verticalSpacing * 2;
+  for (size_t index = 0; index < item->detailCount; ++index) {
+    drawFitted(renderer, UI_10_FONT_ID, x, y, item->detail[index], width);
+    y += renderer.getLineHeight(UI_10_FONT_ID) + metrics.verticalSpacing;
+  }
 }
 
 void PocketActivity::render(RenderLock&&) {
@@ -318,24 +483,32 @@ void PocketActivity::render(RenderLock&&) {
 
   const int headerY = std::max(safeTop, metrics.topPadding);
   const int headerWidth = std::max(0, safeRight - safeLeft);
+  char freshness[80];
+  formatFreshness(freshness, sizeof(freshness));
+  const char* title = headerLabel();
+  if (syncNotice == SyncNotice::None && view != View::Today) {
+    const auto* section = selectedSection();
+    if (section != nullptr) title = section->label;
+  }
   if (headerWidth > 0 && metrics.headerHeight > 0) {
-    GUI.drawHeader(renderer, Rect{safeLeft, headerY, headerWidth, metrics.headerHeight}, headerLabel());
+    GUI.drawHeader(renderer, Rect{safeLeft, headerY, headerWidth, metrics.headerHeight}, title,
+                   view == View::Today ? freshness : nullptr);
   }
 
-  // getScreenSafeArea() currently reserves front hints only, so Pocket keeps side-hint clearance local.
   const int sideInset = std::max(metrics.contentSidePadding, metrics.sideButtonHintsWidth + metrics.verticalSpacing);
-  const int cardX = safeLeft + sideInset;
-  const int cardY = headerY + metrics.headerHeight + metrics.verticalSpacing;
-  const int cardWidth = std::max(0, safeRight - safeLeft - sideInset * 2);
-  const int availableCardHeight = std::max(0, safeBottom - cardY - metrics.verticalSpacing);
-  const auto& card = cardBundle.cardAt(cardSelection.index());
-  const int cardHeight = std::min(availableCardHeight, pocket::preferredCardHeight(renderer, card));
-  pocket::drawCard(renderer, Rect{cardX, cardY, cardWidth, cardHeight}, card, cardSelection.index(),
-                   cardBundle.cardCount);
+  const int contentY = headerY + metrics.headerHeight + metrics.verticalSpacing;
+  const Rect content{safeLeft + sideInset, contentY, std::max(0, safeRight - safeLeft - sideInset * 2),
+                     std::max(0, safeBottom - contentY - metrics.verticalSpacing)};
+  if (view == View::Today)
+    renderToday(content);
+  else if (view == View::Section)
+    renderSection(content);
+  else
+    renderDetail(content);
 
-  const char* previousLabel = cardSelection.canSelectPrevious() ? tr(STR_POCKET_PREVIOUS) : "";
-  const char* nextLabel = cardSelection.canSelectNext() ? tr(STR_POCKET_NEXT) : "";
-  const char* confirmLabel = workerRunning ? "" : canSync() ? tr(STR_POCKET_SYNC) : tr(STR_POCKET_HARI);
+  const char* previousLabel = view == View::Detail ? "" : tr(STR_POCKET_PREVIOUS);
+  const char* nextLabel = view == View::Detail ? "" : tr(STR_POCKET_NEXT);
+  const char* confirmLabel = workerRunning ? "" : canSync() ? tr(STR_SELECT) : tr(STR_POCKET_HARI);
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, previousLabel, nextLabel);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   GUI.drawSideButtonHints(renderer, previousLabel, nextLabel);

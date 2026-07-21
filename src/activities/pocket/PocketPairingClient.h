@@ -4,8 +4,9 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "PocketPairingProtocol.h"
 #include "PocketFirmwareIdentity.h"
+#include "PocketPairingProtocol.h"
+#include "PocketSnapshot.h"
 
 namespace pocket {
 
@@ -101,6 +102,8 @@ class PairingClient {
   PocketClientOutcome removeSelf(const char* bearer, const std::atomic<bool>& cancelled);
   PocketClientOutcome bundle(const char* bearer, const std::atomic<bool>& cancelled, char* json,
                              std::size_t jsonCapacity, std::size_t& jsonLength);
+  PocketClientOutcome snapshot(const char* bearer, const std::atomic<bool>& cancelled, char* json,
+                               std::size_t jsonCapacity, std::size_t& jsonLength);
 
  private:
   PocketGatewayTransport& transport;

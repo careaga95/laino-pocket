@@ -840,9 +840,11 @@ TEST(PocketPairingTransportPolicyTest, RejectsRedirectAmbiguousFramingOversizeAn
   EXPECT_EQ(pocket::validateResponseEnvelope(envelope), pocket::GatewayTransportResult::Success);
 }
 
-TEST(PocketPairingTransportPolicyTest, LargeSuccessBodyIsExplicitlyBoundedToBundleContract) {
-  const pocket::ResponseEnvelope exact{200, true, false, true, true, 4096};
-  const pocket::ResponseEnvelope oversized{200, true, false, true, true, 4097};
+TEST(PocketPairingTransportPolicyTest, LargeSuccessBodyIsExplicitlyBoundedToSnapshotContract) {
+  const pocket::ResponseEnvelope exact{
+      200, true, false, true, true, static_cast<int32_t>(pocket::POCKET_MAX_LARGE_RESPONSE_BODY_BYTES)};
+  const pocket::ResponseEnvelope oversized{
+      200, true, false, true, true, static_cast<int32_t>(pocket::POCKET_MAX_LARGE_RESPONSE_BODY_BYTES + 1)};
   EXPECT_EQ(pocket::validateResponseEnvelope(exact, pocket::POCKET_MAX_LARGE_RESPONSE_BODY_BYTES),
             pocket::GatewayTransportResult::Success);
   EXPECT_EQ(pocket::validateResponseEnvelope(oversized, pocket::POCKET_MAX_LARGE_RESPONSE_BODY_BYTES),
