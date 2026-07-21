@@ -2,8 +2,10 @@
 
 #include <cstring>
 #include <string>
+#include <string_view>
 
 #include "lib/JsonParser/ReleaseJsonParser.h"
+#include "src/network/OtaReleaseChannel.h"
 
 namespace {
 
@@ -121,6 +123,12 @@ void feedChunked(ReleaseJsonParser& p, const char* json, size_t chunkSize) {
 }
 
 }  // namespace
+
+TEST(OtaReleaseChannel, UsesLainoPocketRepository) {
+  constexpr std::string_view url = ota::LATEST_RELEASE_URL;
+  EXPECT_EQ(url, "https://api.github.com/repos/careaga95/laino-pocket/releases/latest");
+  EXPECT_EQ(url.find("crosspoint-reader/crosspoint-reader"), std::string_view::npos);
+}
 
 TEST(ReleaseJsonParser, RealisticPrettyPrinted) {
   ReleaseJsonParser p;
