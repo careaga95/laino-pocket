@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "PocketBundleWorker.h"
 #include "PocketCredential.h"
 #include "PocketCredentialStore.h"
 #include "PocketPairingClient.h"
@@ -41,6 +42,8 @@ class FakeGateway final : public pocket::PocketGatewayTransport {
   std::string path;
   std::string body;
   std::string bearer;
+  std::string successJson;
+  std::size_t successCapacity = 0;
   int calls = 0;
 
   void request(const pocket::GatewayRequest& request, const std::atomic<bool>&,
@@ -50,17 +53,31 @@ class FakeGateway final : public pocket::PocketGatewayTransport {
     path = request.path == nullptr ? "" : request.path;
     body.assign(request.jsonBody == nullptr ? "" : request.jsonBody, request.jsonBodyLength);
     bearer = request.bearer == nullptr ? "" : request.bearer;
+    successCapacity = request.successBodyCapacity;
     response = next;
+    if (response.httpStatus >= 200 && response.httpStatus <= 299 && request.successBody != nullptr) {
+      if (successJson.size() + 1 > request.successBodyCapacity) {
+        response.transport = pocket::GatewayTransportResult::OversizedResponse;
+        response.bodyLength = 0;
+        return;
+      }
+      std::memcpy(request.successBody, successJson.data(), successJson.size());
+      request.successBody[successJson.size()] = '\0';
+      response.bodyLength = static_cast<uint16_t>(successJson.size());
+    }
   }
 
   void json(int status, const std::string& value, uint8_t retryAfter = 0) {
+    successJson = value;
     next = {};
     next.transport = pocket::GatewayTransportResult::Success;
     next.httpStatus = static_cast<int16_t>(status);
     next.retryAfter = retryAfter;
-    next.bodyLength = static_cast<uint16_t>(value.size());
-    std::memcpy(next.body, value.data(), value.size());
-    next.body[value.size()] = '\0';
+    if (value.size() < sizeof(next.body)) {
+      next.bodyLength = static_cast<uint16_t>(value.size());
+      std::memcpy(next.body, value.data(), value.size());
+      next.body[value.size()] = '\0';
+    }
   }
 };
 
@@ -572,6 +589,56 @@ TEST(PocketPairingClientTest, DeviceCodeAndBearerNeverAppearInUrls) {
   EXPECT_EQ(gateway.bearer, TOKEN);
 }
 
+TEST(PocketBundleClientTest, UsesExactAuthenticatedPathAndAcceptsNormativeBundle) {
+  FakeGateway gateway;
+  gateway.json(200,
+               R"({"protocolVersion":1,"cards":[{"label":"Laino","title":"Today","subtitle":"Ready","lines":["One"]}]})");
+  pocket::PairingClient client(gateway);
+  std::atomic<bool> cancelled{false};
+  char json[pocket::MAX_JSON_DOCUMENT_BYTES + 1]{};
+  std::size_t jsonLength = 0;
+
+  const auto outcome = client.bundle(TOKEN, cancelled, json, sizeof(json), jsonLength);
+
+  EXPECT_EQ(outcome.result, pocket::PocketClientResult::Success);
+  EXPECT_EQ(gateway.method, pocket::GatewayMethod::Get);
+  EXPECT_EQ(gateway.path, "/api/device/pocket/v1/bundle");
+  EXPECT_EQ(gateway.path.find(TOKEN), std::string::npos);
+  EXPECT_EQ(gateway.bearer, TOKEN);
+  EXPECT_EQ(gateway.successCapacity, sizeof(json));
+  EXPECT_EQ(jsonLength, gateway.successJson.size());
+}
+
+TEST(PocketBundleClientTest, RejectsMoreThanFourCardsAndInvalidOutputCapacity) {
+  FakeGateway gateway;
+  const std::string card = R"({"label":"L","title":"T","subtitle":"S","lines":[]})";
+  gateway.json(200, std::string("{\"protocolVersion\":1,\"cards\":[") + card + "," + card + "," + card +
+                        "," + card + "," + card + "]}");
+  pocket::PairingClient client(gateway);
+  std::atomic<bool> cancelled{false};
+  char json[pocket::MAX_JSON_DOCUMENT_BYTES + 1]{};
+  std::size_t jsonLength = 999;
+
+  EXPECT_EQ(client.bundle(TOKEN, cancelled, json, sizeof(json), jsonLength).result,
+            pocket::PocketClientResult::InvalidResponse);
+  EXPECT_EQ(jsonLength, 0U);
+  EXPECT_EQ(client.bundle(TOKEN, cancelled, json, sizeof(json) - 1, jsonLength).result,
+            pocket::PocketClientResult::InvalidResponse);
+}
+
+TEST(PocketBundleClientTest, PreservesNormativeRevocationClassification) {
+  FakeGateway gateway;
+  gateway.json(401, R"({"error":"device_revoked"})");
+  pocket::PairingClient client(gateway);
+  std::atomic<bool> cancelled{false};
+  char json[pocket::MAX_JSON_DOCUMENT_BYTES + 1]{};
+  std::size_t jsonLength = 0;
+
+  EXPECT_EQ(client.bundle(TOKEN, cancelled, json, sizeof(json), jsonLength).result,
+            pocket::PocketClientResult::Revoked);
+  EXPECT_EQ(jsonLength, 0U);
+}
+
 TEST(PocketPairingClientTest, ClassifiesRateLimitConsumedRevokedAndMalformedErrors) {
   FakeGateway gateway;
   pocket::PairingClient client(gateway);
@@ -730,6 +797,19 @@ TEST(PocketPairingWorkerTest, WorkerContextOutlivesOwnerUntilOrderedTeardown) {
   context->releaseReference();  // Worker is the last owner and securely destroys the context.
 }
 
+TEST(PocketBundleWorkerTest, LargeResponseContextOutlivesActivityOwnerUntilWorkerRelease) {
+  auto* context = new pocket::BundleWorkerContext();
+  ASSERT_TRUE(context->lifecycle.begin());
+  context->addReference();
+  context->releaseReference();
+  context->cancelled.store(true, std::memory_order_release);
+  context->lifecycle.requestCancel();
+  context->outcome.result = pocket::PocketClientResult::Cancelled;
+  context->lifecycle.release();
+  EXPECT_TRUE(context->lifecycle.ownerMayFinish());
+  context->releaseReference();
+}
+
 TEST(PocketPairingTransportPolicyTest, CancellationAndTotalDeadlineUseProductionCheckpoints) {
   constexpr pocket::TransportCheckpoint CHECKPOINTS[] = {
       pocket::TransportCheckpoint::BeforeRequest, pocket::TransportCheckpoint::DnsWait,
@@ -760,6 +840,17 @@ TEST(PocketPairingTransportPolicyTest, RejectsRedirectAmbiguousFramingOversizeAn
   EXPECT_EQ(pocket::validateResponseEnvelope(envelope), pocket::GatewayTransportResult::Success);
 }
 
+TEST(PocketPairingTransportPolicyTest, LargeSuccessBodyIsExplicitlyBoundedToBundleContract) {
+  const pocket::ResponseEnvelope exact{200, true, false, true, true, 4096};
+  const pocket::ResponseEnvelope oversized{200, true, false, true, true, 4097};
+  EXPECT_EQ(pocket::validateResponseEnvelope(exact, pocket::POCKET_MAX_LARGE_RESPONSE_BODY_BYTES),
+            pocket::GatewayTransportResult::Success);
+  EXPECT_EQ(pocket::validateResponseEnvelope(oversized, pocket::POCKET_MAX_LARGE_RESPONSE_BODY_BYTES),
+            pocket::GatewayTransportResult::OversizedResponse);
+  EXPECT_EQ(pocket::validateResponseEnvelope(exact, pocket::POCKET_MAX_LARGE_RESPONSE_BODY_BYTES + 1),
+            pocket::GatewayTransportResult::OversizedResponse);
+}
+
 TEST(PocketPairingTransportPolicyTest, AllowsBoundedCloudflareResponseMetadataLines) {
   // Cloudflare Report-To lines observed in production reached 260 bytes. The
   // transport still applies the independent 8 KiB aggregate metadata limit.
@@ -773,6 +864,21 @@ TEST(PocketPairingLoggingTest, LogStatementsNeverInterpolatePairingSecrets) {
   const std::string source((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
   constexpr const char* FORBIDDEN[] = {"deviceCode", "userCode",         "accessToken",
                                        "bearer",     "credential.token", "Authorization"};
+  std::size_t position = 0;
+  while ((position = source.find("LOG_", position)) != std::string::npos) {
+    const std::size_t end = source.find(");", position);
+    ASSERT_NE(end, std::string::npos);
+    const std::string statement = source.substr(position, end + 2 - position);
+    for (const char* forbidden : FORBIDDEN) EXPECT_EQ(statement.find(forbidden), std::string::npos);
+    position = end + 2;
+  }
+}
+
+TEST(PocketBundleLoggingTest, SyncLogStatementsNeverInterpolateCredentialOrResponseData) {
+  std::ifstream input(POCKET_ACTIVITY_SOURCE);
+  ASSERT_TRUE(input.is_open());
+  const std::string source((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+  constexpr const char* FORBIDDEN[] = {"bearer", "credential.token", "context->json", "context->credential"};
   std::size_t position = 0;
   while ((position = source.find("LOG_", position)) != std::string::npos) {
     const std::size_t end = source.find(");", position);

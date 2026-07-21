@@ -9,10 +9,11 @@ TransportControlDecision checkTransportControl(const TransportCheckpoint, const 
   return TransportControlDecision::Continue;
 }
 
-GatewayTransportResult validateResponseEnvelope(const ResponseEnvelope& envelope) {
+GatewayTransportResult validateResponseEnvelope(const ResponseEnvelope& envelope, const uint32_t maximumBodyBytes) {
   if (envelope.status >= 300 && envelope.status <= 399) return GatewayTransportResult::RedirectRejected;
   if (envelope.hasContentLength && envelope.hasTransferEncoding) return GatewayTransportResult::MalformedHttp;
-  if (envelope.contentLength > static_cast<int32_t>(POCKET_MAX_RESPONSE_BODY_BYTES)) {
+  if (maximumBodyBytes > POCKET_MAX_LARGE_RESPONSE_BODY_BYTES ||
+      envelope.contentLength > static_cast<int32_t>(maximumBodyBytes)) {
     return GatewayTransportResult::OversizedResponse;
   }
   if (envelope.status == 204) {

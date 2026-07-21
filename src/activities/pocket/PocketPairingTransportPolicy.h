@@ -13,6 +13,7 @@ inline constexpr std::size_t POCKET_MAX_RESPONSE_LINE_BYTES = 512;
 
 inline constexpr uint32_t POCKET_TOTAL_REQUEST_TIMEOUT_MS = 13000;
 inline constexpr uint32_t POCKET_MAX_RESPONSE_BODY_BYTES = 1024;
+inline constexpr uint32_t POCKET_MAX_LARGE_RESPONSE_BODY_BYTES = 4096;
 
 enum class TransportCheckpoint : uint8_t { BeforeRequest, DnsWait, ResponseRead, BetweenPolls };
 enum class TransportControlDecision : uint8_t { Continue, Cancelled, TimedOut };
@@ -29,6 +30,7 @@ struct ResponseEnvelope {
   int32_t contentLength = -1;
 };
 
-GatewayTransportResult validateResponseEnvelope(const ResponseEnvelope& envelope);
+GatewayTransportResult validateResponseEnvelope(
+    const ResponseEnvelope& envelope, uint32_t maximumBodyBytes = POCKET_MAX_RESPONSE_BODY_BYTES);
 
 }  // namespace pocket

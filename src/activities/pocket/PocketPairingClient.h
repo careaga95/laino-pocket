@@ -32,6 +32,9 @@ struct GatewayRequest {
   const char* jsonBody = nullptr;
   std::size_t jsonBodyLength = 0;
   const char* bearer = nullptr;
+  // Successful large responses may use caller-owned storage. Non-2xx JSON errors always stay in GatewayResponse.
+  char* successBody = nullptr;
+  std::size_t successBodyCapacity = 0;
 };
 
 struct GatewayResponse {
@@ -96,6 +99,8 @@ class PairingClient {
                                PairingFinalizeResponse& response);
   PocketClientOutcome self(const char* bearer, const std::atomic<bool>& cancelled, PocketSelfResponse& response);
   PocketClientOutcome removeSelf(const char* bearer, const std::atomic<bool>& cancelled);
+  PocketClientOutcome bundle(const char* bearer, const std::atomic<bool>& cancelled, char* json,
+                             std::size_t jsonCapacity, std::size_t& jsonLength);
 
  private:
   PocketGatewayTransport& transport;

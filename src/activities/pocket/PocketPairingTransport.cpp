@@ -164,10 +164,15 @@ class RequestSession {
     }
     if (WiFi.status() != WL_CONNECTED) return finish(GatewayTransportResult::NoWifi);
     if (ESP.getFreeHeap() < MIN_TLS_HEAP_BYTES) return finish(GatewayTransportResult::LowMemory);
+    const bool hasSuccessBody = request.successBody != nullptr;
     if (request.path == nullptr || request.path[0] != '/' || std::strchr(request.path, '?') != nullptr ||
-        request.jsonBodyLength > 256 || (request.jsonBodyLength > 0 && request.jsonBody == nullptr)) {
+        request.jsonBodyLength > 256 || (request.jsonBodyLength > 0 && request.jsonBody == nullptr) ||
+        hasSuccessBody != (request.successBodyCapacity > 0) ||
+        (hasSuccessBody && (request.successBodyCapacity < 2 ||
+                            request.successBodyCapacity > POCKET_MAX_LARGE_RESPONSE_BODY_BYTES + 1))) {
       return finish(GatewayTransportResult::WriteFailure, ERROR_MALFORMED);
     }
+    if (hasSuccessBody) request.successBody[0] = '\0';
 
     IPAddress address;
     const IoStatus dns = resolve(address);
@@ -188,7 +193,7 @@ class RequestSession {
     }
     if (cancelled.load(std::memory_order_acquire)) return finish(GatewayTransportResult::Cancelled);
     if (!writeRequest(request)) return;
-    readResponse();
+    readResponse(request);
   }
 
  private:
@@ -202,6 +207,8 @@ class RequestSession {
   bool chunkNeedsCrlf = false;
   bool chunkEnded = false;
   uint32_t chunkRemaining = 0;
+  char* body = response.body;
+  std::size_t bodyCapacity = sizeof(response.body);
 
   bool timedOut() const {
     return checkTransportControl(TransportCheckpoint::ResponseRead, false,
@@ -381,7 +388,7 @@ class RequestSession {
       finish(GatewayTransportResult::ReadFailure, lastError());
   }
 
-  void readResponse() {
+  void readResponse(const GatewayRequest& request) {
     char line[POCKET_MAX_RESPONSE_LINE_BYTES];
     std::size_t length = 0;
     IoStatus io = readLine(line, sizeof(line), length);
@@ -394,6 +401,10 @@ class RequestSession {
     response.httpStatus = static_cast<int16_t>((line[9] - '0') * 100 + (line[10] - '0') * 10 + line[11] - '0');
     if (validateResponseEnvelope(ResponseEnvelope{response.httpStatus}) == GatewayTransportResult::RedirectRejected) {
       return finish(GatewayTransportResult::RedirectRejected);
+    }
+    if (response.httpStatus >= 200 && response.httpStatus <= 299 && request.successBody != nullptr) {
+      body = request.successBody;
+      bodyCapacity = request.successBodyCapacity;
     }
 
     bool sawLength = false;
@@ -437,14 +448,16 @@ class RequestSession {
         response.retryAfter = static_cast<uint8_t>(value > 255 ? 255 : value);
       }
     }
-    const GatewayTransportResult envelope = validateResponseEnvelope(
-        {response.httpStatus, sawLength, sawTransfer, sawContentType, jsonContentType, contentRemaining});
+    const GatewayTransportResult envelope =
+        validateResponseEnvelope({response.httpStatus, sawLength, sawTransfer, sawContentType, jsonContentType,
+                                  contentRemaining},
+                                 static_cast<uint32_t>(bodyCapacity - 1));
     if (envelope != GatewayTransportResult::Success) {
       return finish(envelope, envelope == GatewayTransportResult::MalformedHttp ? ERROR_MALFORMED : 0);
     }
     if (response.httpStatus == 204) {
       if (chunked || contentRemaining > 0) return finish(GatewayTransportResult::MalformedHttp, ERROR_MALFORMED);
-      response.body[0] = '\0';
+      body[0] = '\0';
       return finish(GatewayTransportResult::Success);
     }
     readBody();
@@ -507,18 +520,17 @@ class RequestSession {
     while (true) {
       uint8_t buffer[128];
       std::size_t count = 0;
-      const std::size_t capacity = std::min(sizeof(buffer), static_cast<std::size_t>(1025 - response.bodyLength));
-      const IoStatus status = readBodyPart(buffer, capacity, count);
+      const IoStatus status = readBodyPart(buffer, sizeof(buffer), count);
       if (status == IoStatus::End) {
-        response.body[response.bodyLength] = '\0';
+        body[response.bodyLength] = '\0';
         return finish(GatewayTransportResult::Success);
       }
       if (status != IoStatus::Ok || count == 0) return failForIo(status == IoStatus::Ok ? IoStatus::Failure : status);
-      if (response.bodyLength + count > 1024) {
+      if (response.bodyLength + count >= bodyCapacity) {
         secureClear(buffer, sizeof(buffer));
         return finish(GatewayTransportResult::OversizedResponse);
       }
-      std::memcpy(response.body + response.bodyLength, buffer, count);
+      std::memcpy(body + response.bodyLength, buffer, count);
       response.bodyLength = static_cast<uint16_t>(response.bodyLength + count);
       secureClear(buffer, sizeof(buffer));
     }

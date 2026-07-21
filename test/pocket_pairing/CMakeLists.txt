@@ -1,5 +1,7 @@
 add_executable(PocketPairingTest
   PocketPairingTest.cpp
+  ${REPO_ROOT}/src/activities/pocket/PocketBundleWorker.cpp
+  ${REPO_ROOT}/src/activities/pocket/PocketCardParser.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketCredential.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketCredentialStorage.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketPairingClient.cpp
@@ -19,6 +21,7 @@ target_link_libraries(PocketPairingTest PRIVATE
 
 target_compile_definitions(PocketPairingTest PRIVATE
   PAIRING_ACTIVITY_SOURCE="${REPO_ROOT}/src/activities/pocket/PocketPairingActivity.cpp"
+  POCKET_ACTIVITY_SOURCE="${REPO_ROOT}/src/activities/pocket/PocketActivity.cpp"
 )
 
 file(STRINGS "${REPO_ROOT}/platformio.ini" POCKET_BASE_VERSION_LINE
@@ -42,6 +45,7 @@ target_compile_definitions(PocketPairingTest PRIVATE
 
 add_executable(PocketPairingPreflight
   PocketPairingPreflight.cpp
+  ${REPO_ROOT}/src/activities/pocket/PocketCardParser.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketCredential.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketPairingClient.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketPairingProtocol.cpp
