@@ -131,11 +131,11 @@ void PocketActivity::runWorker(pocket::BundleWorkerContext* context) {
     pocket::Esp32PocketGatewayTransport gateway;
     pocket::PairingClient client(gateway);
     char bearer[pocket::DEVICE_TOKEN_TEXT_BYTES + 1]{};
-    std::size_t jsonLength = 0;
     if (!pocket::encodeBase64UrlToken(context->credential.token, sizeof(context->credential.token), bearer,
                                       sizeof(bearer))) {
       context->outcome = {pocket::PocketClientResult::InvalidResponse};
     } else {
+      std::size_t jsonLength = 0;
       context->outcome = client.bundle(bearer, context->cancelled, context->json, sizeof(context->json), jsonLength);
       context->jsonLength = static_cast<uint16_t>(jsonLength);
     }
@@ -210,7 +210,7 @@ void PocketActivity::processWorkerResult() {
     syncNotice = SyncNotice::PairingNeedsAttention;
     LOG_INF("PKT", "Bundle sync rejected result=%s http=%d", pocket::pocketClientResultName(outcome.result),
             static_cast<int>(outcome.httpStatus));
-  } else if (outcome.result != pocket::PocketClientResult::Cancelled || !exitAfterCancellation) {
+  } else if (outcome.result != pocket::PocketClientResult::Cancelled) {
     syncNotice = SyncNotice::Failed;
     LOG_ERR("PKT", "Bundle sync failed result=%s transport=%s http=%d elapsed=%lu stack_margin=%lu",
             pocket::pocketClientResultName(outcome.result), pocket::gatewayTransportResultName(outcome.transport),
