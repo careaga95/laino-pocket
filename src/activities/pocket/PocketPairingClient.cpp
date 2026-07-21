@@ -5,6 +5,7 @@
 #include <cstring>
 #include <iterator>
 
+#include "PocketCardParser.h"
 #include "PocketCredential.h"
 
 namespace pocket {
@@ -14,6 +15,7 @@ constexpr char START_PATH[] = "/api/device/pocket/v1/pairing/start";
 constexpr char POLL_PATH[] = "/api/device/pocket/v1/pairing/poll";
 constexpr char FINALIZE_PATH[] = "/api/device/pocket/v1/pairing/finalize";
 constexpr char SELF_PATH[] = "/api/device/pocket/v1/self";
+constexpr char BUNDLE_PATH[] = "/api/device/pocket/v1/bundle";
 
 PocketClientOutcome baseOutcome(const GatewayResponse& response) {
   PocketClientOutcome outcome{};
@@ -227,6 +229,29 @@ PocketClientOutcome PairingClient::removeSelf(const char* bearer, const std::ato
     if (gateway.httpStatus != 200 ||
         parsePocketStatusResponse(gateway.body, gateway.bodyLength, "revoked") != JsonParseResult::Success) {
       outcome.result = PocketClientResult::InvalidResponse;
+    }
+  }
+  secureClear(&gateway, sizeof(gateway));
+  return outcome;
+}
+
+PocketClientOutcome PairingClient::bundle(const char* bearer, const std::atomic<bool>& cancelled, char* json,
+                                          const std::size_t jsonCapacity, std::size_t& jsonLength) {
+  jsonLength = 0;
+  if (!isBase64Url256(bearer, bearer == nullptr ? 0 : std::strlen(bearer)) || json == nullptr ||
+      jsonCapacity != MAX_JSON_DOCUMENT_BYTES + 1) {
+    return {PocketClientResult::InvalidResponse};
+  }
+  json[0] = '\0';
+  GatewayResponse gateway{};
+  const GatewayRequest request{GatewayMethod::Get, BUNDLE_PATH, nullptr, 0, bearer, json, jsonCapacity};
+  PocketClientOutcome outcome = execute(request, cancelled, gateway);
+  if (outcome.result == PocketClientResult::Success) {
+    if (gateway.httpStatus != 200 ||
+        validateCardBundle(json, gateway.bodyLength, MAX_REMOTE_CARDS) != ParseResult::Success) {
+      outcome.result = PocketClientResult::InvalidResponse;
+    } else {
+      jsonLength = gateway.bodyLength;
     }
   }
   secureClear(&gateway, sizeof(gateway));

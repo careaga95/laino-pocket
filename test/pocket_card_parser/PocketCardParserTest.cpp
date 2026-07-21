@@ -247,6 +247,17 @@ TEST(PocketCardParserDocumentFailureTest, MoreThanEightCardsIsRejected) {
   expectFailureLeavesDestinationUnchanged(bundleJson(cards), pocket::ParseResult::TooManyCards);
 }
 
+TEST(PocketCardParserDocumentFailureTest, RemoteValidationUsesFourCardContractWithoutChangingLocalLimit) {
+  const std::vector<std::string> cards(pocket::MAX_REMOTE_CARDS + 1, cardJson());
+  const std::string json = bundleJson(cards);
+  pocket::CardBundle localBundle;
+
+  EXPECT_EQ(parse(json, localBundle), pocket::ParseResult::Success);
+  EXPECT_EQ(localBundle.cardCount, pocket::MAX_REMOTE_CARDS + 1);
+  EXPECT_EQ(pocket::validateCardBundle(json.data(), json.size(), pocket::MAX_REMOTE_CARDS),
+            pocket::ParseResult::TooManyCards);
+}
+
 TEST(PocketCardParserDocumentFailureTest, TrailingCommaInCardsArrayIsMalformedJson) {
   expectFailureLeavesDestinationUnchanged(
       R"({"protocolVersion":1,"cards":[{"label":"L","title":"T","subtitle":"S","lines":[]},]})",

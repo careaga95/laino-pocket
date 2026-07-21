@@ -63,6 +63,7 @@ class BoundedParser final {
   const char* const json;
   const size_t length;
   CardBundle* const output;
+  const size_t maximumCards;
   size_t position = 0;
 
   void skipWhitespace() {
@@ -403,7 +404,7 @@ class BoundedParser final {
 
     size_t cardCount = 0;
     while (true) {
-      if (cardCount >= MAX_CARDS) return ParseResult::TooManyCards;
+      if (cardCount >= maximumCards) return ParseResult::TooManyCards;
       skipWhitespace();
       if (peek() != '{') return ParseResult::WrongFieldType;
       ParseResult result = parseCard(output != nullptr ? &output->cards[cardCount] : nullptr, depth + 1);
@@ -479,8 +480,8 @@ class BoundedParser final {
   }
 
  public:
-  BoundedParser(const char* source, const size_t sourceLength, CardBundle* destination)
-      : json(source), length(sourceLength), output(destination) {}
+  BoundedParser(const char* source, const size_t sourceLength, CardBundle* destination, const size_t cardLimit)
+      : json(source), length(sourceLength), output(destination), maximumCards(cardLimit) {}
 
   ParseResult parseDocument() {
     skipWhitespace();
@@ -500,15 +501,16 @@ ParseResult parseCardBundle(const char* json, const size_t jsonLength, CardBundl
   // Both passes use identical schema and limits. Publication is expected to be infallible after validation;
   // adding destination-dependent parsing behavior would violate this atomicity guarantee.
   destination = CardBundle{};
-  BoundedParser publisher(json, jsonLength, &destination);
+  BoundedParser publisher(json, jsonLength, &destination, MAX_CARDS);
   return publisher.parseDocument();
 }
 
-ParseResult validateCardBundle(const char* json, const size_t jsonLength) {
+ParseResult validateCardBundle(const char* json, const size_t jsonLength, const size_t maximumCards) {
   if (json == nullptr || jsonLength == 0) return ParseResult::EmptyInput;
   if (jsonLength > MAX_JSON_DOCUMENT_BYTES) return ParseResult::DocumentTooLarge;
+  if (maximumCards < MIN_CARDS || maximumCards > MAX_CARDS) return ParseResult::TooManyCards;
 
-  BoundedParser validator(json, jsonLength, nullptr);
+  BoundedParser validator(json, jsonLength, nullptr, maximumCards);
   return validator.parseDocument();
 }
 
