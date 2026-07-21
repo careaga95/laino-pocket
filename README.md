@@ -82,7 +82,7 @@ USB port or browser before assuming the device is locked. Only reach for the unl
 ### Web installer (specific version)
 
 1. Connect your device to your computer via USB-C and wake/unlock the device
-2. Download a `firmware.bin` from [Releases](https://github.com/crosspoint-reader/crosspoint-reader/releases), local build, or continuous integration artifact.
+2. Download a `firmware.bin` from [Laino Pocket Releases](https://github.com/careaga95/laino-pocket/releases), a local build, or a continuous integration artifact.
 3. Go to https://crosspointreader.com/#flash-tools, select device (X3 or X4), click "Custom .bin" and upload a `firmware.bin`.
 
 ### Revert to Official Firmware
@@ -97,7 +97,7 @@ To revert to the official firmware, you can also flash the latest official firmw
 pip install esptool
 ```
 
-2. Download `firmware.bin` from the [releases page](https://github.com/crosspoint-reader/crosspoint-reader/releases).
+2. Download `firmware.bin` from the [Laino Pocket releases page](https://github.com/careaga95/laino-pocket/releases).
 3. Connect your device via USB-C.
 4. Find the device port. On Linux, run `dmesg` after connecting. On macOS:
 
