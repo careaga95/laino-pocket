@@ -6,12 +6,15 @@ add_executable(PocketPairingTest
   ${REPO_ROOT}/src/activities/pocket/PocketCredentialStorage.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketPairingClient.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketPairingProtocol.cpp
+  ${REPO_ROOT}/src/activities/pocket/PocketSnapshot.cpp
+  ${REPO_ROOT}/src/activities/pocket/PocketSnapshotParser.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketPairingWorker.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketPairingTransportPolicy.cpp
 )
 
 target_include_directories(PocketPairingTest PRIVATE
   ${REPO_ROOT}/src/activities/pocket
+  ${REPO_ROOT}/.pio/libdeps/gh_release/ArduinoJson/src
 )
 
 target_link_libraries(PocketPairingTest PRIVATE
@@ -49,9 +52,12 @@ add_executable(PocketPairingPreflight
   ${REPO_ROOT}/src/activities/pocket/PocketCredential.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketPairingClient.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketPairingProtocol.cpp
+  ${REPO_ROOT}/src/activities/pocket/PocketSnapshot.cpp
+  ${REPO_ROOT}/src/activities/pocket/PocketSnapshotParser.cpp
 )
 target_include_directories(PocketPairingPreflight PRIVATE
   ${REPO_ROOT}/src/activities/pocket
+  ${REPO_ROOT}/.pio/libdeps/gh_release/ArduinoJson/src
 )
 target_link_libraries(PocketPairingPreflight PRIVATE
   crosspoint_test_common

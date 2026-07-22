@@ -7,6 +7,7 @@
 
 #include "PocketCardParser.h"
 #include "PocketCredential.h"
+#include "PocketSnapshotParser.h"
 
 namespace pocket {
 namespace {
@@ -16,6 +17,7 @@ constexpr char POLL_PATH[] = "/api/device/pocket/v1/pairing/poll";
 constexpr char FINALIZE_PATH[] = "/api/device/pocket/v1/pairing/finalize";
 constexpr char SELF_PATH[] = "/api/device/pocket/v1/self";
 constexpr char BUNDLE_PATH[] = "/api/device/pocket/v1/bundle";
+constexpr char SNAPSHOT_PATH[] = "/api/device/pocket/v1/snapshot";
 
 PocketClientOutcome baseOutcome(const GatewayResponse& response) {
   PocketClientOutcome outcome{};
@@ -51,10 +53,11 @@ PocketClientResult resultForError(const int status, const char* error) {
   }
 
   constexpr const char* KNOWN_CODES[] = {
-      "expired_or_unknown", "not_claimed",           "consumed",        "unauthorized",
-      "device_revoked",     "scope_denied",          "principal_not_allowed",
-      "body_too_large",     "unsupported_media_type", "server_busy",     "rate_limited",
-      "invalid_request",    "unsupported_protocol",
+      "expired_or_unknown",    "not_claimed",    "consumed",
+      "unauthorized",          "device_revoked", "scope_denied",
+      "principal_not_allowed", "body_too_large", "unsupported_media_type",
+      "server_busy",           "rate_limited",   "invalid_request",
+      "unsupported_protocol",
   };
   if (std::any_of(std::begin(KNOWN_CODES), std::end(KNOWN_CODES),
                   [error](const char* code) { return std::strcmp(error, code) == 0; })) {
@@ -125,8 +128,7 @@ PocketClientOutcome PairingClient::start(const PairingIdentity& identity, const 
   }
   if (!validAsciiField(identity.firmware)) return invalidLocalField(LocalValidationField::Firmware);
   char body[128];
-  const int length = std::snprintf(body, sizeof(body),
-                                   "{\"protocol\":%u,\"model\":\"%s\",\"firmware\":\"%s\"}",
+  const int length = std::snprintf(body, sizeof(body), "{\"protocol\":%u,\"model\":\"%s\",\"firmware\":\"%s\"}",
                                    static_cast<unsigned int>(identity.protocol), identity.model, identity.firmware);
   if (length <= 0 || static_cast<std::size_t>(length) >= sizeof(body)) return {PocketClientResult::InvalidResponse};
   GatewayResponse gateway{};
@@ -249,6 +251,28 @@ PocketClientOutcome PairingClient::bundle(const char* bearer, const std::atomic<
   if (outcome.result == PocketClientResult::Success) {
     if (gateway.httpStatus != 200 ||
         validateCardBundle(json, gateway.bodyLength, MAX_REMOTE_CARDS) != ParseResult::Success) {
+      outcome.result = PocketClientResult::InvalidResponse;
+    } else {
+      jsonLength = gateway.bodyLength;
+    }
+  }
+  secureClear(&gateway, sizeof(gateway));
+  return outcome;
+}
+
+PocketClientOutcome PairingClient::snapshot(const char* bearer, const std::atomic<bool>& cancelled, char* json,
+                                            const std::size_t jsonCapacity, std::size_t& jsonLength) {
+  jsonLength = 0;
+  if (!isBase64Url256(bearer, bearer == nullptr ? 0 : std::strlen(bearer)) || json == nullptr ||
+      jsonCapacity != MAX_SNAPSHOT_JSON_BYTES + 1) {
+    return {PocketClientResult::InvalidResponse};
+  }
+  json[0] = '\0';
+  GatewayResponse gateway{};
+  const GatewayRequest request{GatewayMethod::Get, SNAPSHOT_PATH, nullptr, 0, bearer, json, jsonCapacity};
+  PocketClientOutcome outcome = execute(request, cancelled, gateway);
+  if (outcome.result == PocketClientResult::Success) {
+    if (gateway.httpStatus != 200 || validatePocketSnapshot(json, gateway.bodyLength) != SnapshotParseResult::Success) {
       outcome.result = PocketClientResult::InvalidResponse;
     } else {
       jsonLength = gateway.bodyLength;
