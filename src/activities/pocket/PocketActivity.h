@@ -13,7 +13,17 @@
 struct Rect;
 
 class PocketActivity final : public Activity {
-  enum class SyncNotice : uint8_t { None, Updating, Updated, Failed, PairingNeedsAttention };
+  enum class SyncNotice : uint8_t {
+    None,
+    Updating,
+    Updated,
+    NoWifi,
+    LowMemory,
+    ServiceUnavailable,
+    InvalidData,
+    CacheFailure,
+    PairingNeedsAttention
+  };
   enum class View : uint8_t { Today, Section, Detail };
 
   pocket::PocketSdCacheStorage cacheStorage;
@@ -29,7 +39,8 @@ class PocketActivity final : public Activity {
   bool workerRunning = false;
   bool pendingAfterWifi = false;
   bool exitAfterCancellation = false;
-  bool longPressFired = false;
+  bool autoSyncPending = false;
+  bool initialRenderComplete = false;
   uint32_t workerStackMargin = 0;
   View view = View::Today;
   size_t todaySelection = 0;
@@ -58,13 +69,16 @@ class PocketActivity final : public Activity {
   bool startWorker();
   void processWorkerResult();
   void cancelWorkerAndExit();
+  void restoreCachedSnapshot();
   [[nodiscard]] bool canSync() const { return credentialPresent && !credentialNeedsAttention; }
+  [[nodiscard]] bool refreshDue() const;
   [[nodiscard]] const char* headerLabel() const;
   [[nodiscard]] const pocket::SnapshotSection* selectedSection() const;
   [[nodiscard]] const pocket::SnapshotItem* selectedItem() const;
   void moveSelection(int delta);
   void openSelection();
   void goBack();
+  void goToday();
   void renderToday(const Rect& content);
   void renderSection(const Rect& content);
   void renderDetail(const Rect& content);

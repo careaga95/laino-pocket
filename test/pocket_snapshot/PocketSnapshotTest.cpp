@@ -12,7 +12,7 @@
 namespace {
 
 constexpr char VALID[] =
-    R"({"protocolVersion":2,"snapshotId":"snapshot-1","generatedAtEpoch":1774252800,"refreshAfterEpoch":1774260000,"sourceStatus":{"calendar":"fresh","tasks":"partial","commitments":"fresh"},"today":{"nextMeeting":null,"priorities":[],"counts":{"agenda":1,"tasks":1,"waiting":0,"owe":0}},"sections":[{"id":"agenda","label":"Agenda","total":1,"items":[{"id":"event-opaque","title":"Product review","subtitle":"10:00 AM–10:30 AM","detail":["Room 2"]}]},{"id":"tasks","label":"Tasks","total":1,"items":[{"id":"task-opaque","title":"Send brief","subtitle":"Due Jul 20 · Work","detail":[]}]},{"id":"waiting","label":"Waiting On","total":0,"items":[]},{"id":"owe","label":"You Owe","total":0,"items":[]}]})";
+    R"({"protocolVersion":2,"snapshotId":"snapshot-1","generatedAtEpoch":1774252800,"refreshAfterEpoch":1774260000,"sourceStatus":{"calendar":"fresh","tasks":"partial","commitments":"fresh"},"today":{"nextMeeting":null,"priorities":[],"counts":{"agenda":1,"tasks":1,"waiting":306,"owe":404}},"sections":[{"id":"agenda","label":"Agenda","total":1,"items":[{"id":"event-opaque","title":"Product review","subtitle":"10:00 AM–10:30 AM","detail":["Room 2","Alice","Organizer: Bob"]}]},{"id":"tasks","label":"Tasks","total":1,"items":[{"id":"task-opaque","title":"Send brief","subtitle":"Due Jul 20 · Work","detail":[]}]},{"id":"waiting","label":"Waiting On","total":306,"items":[]},{"id":"owe","label":"You Owe","total":404,"items":[]}]})";
 
 class MemoryStorage final : public pocket::PocketCacheStorage {
  public:
@@ -51,16 +51,33 @@ TEST(PocketSnapshotParser, ParsesBoundedHierarchyAndSourceState) {
   ASSERT_NE(item, nullptr);
   EXPECT_STREQ(item->title, "Product review");
   EXPECT_STREQ(item->detail[0], "Room 2");
+  EXPECT_EQ(item->detailCount, 3);
+  EXPECT_EQ(snapshot.sectionAt(2)->total, 306U);
+  EXPECT_EQ(snapshot.sectionAt(3)->total, 404U);
+  EXPECT_LT(sizeof(snapshot), 256U);
 }
 
 TEST(PocketSnapshotParser, RejectsUnsupportedProtocolAndLeavesDestinationUnchanged) {
   pocket::PocketSnapshot snapshot;
-  snapshot.generatedAtEpoch = 42;
+  ASSERT_EQ(pocket::parsePocketSnapshot(VALID, std::strlen(VALID), snapshot), pocket::SnapshotParseResult::Success);
+  const auto* originalItem = snapshot.itemAt(*snapshot.sectionAt(0), 0);
+  ASSERT_NE(originalItem, nullptr);
   std::string invalid = VALID;
   invalid.replace(invalid.find("\"protocolVersion\":2"), std::strlen("\"protocolVersion\":2"), "\"protocolVersion\":3");
   EXPECT_EQ(pocket::parsePocketSnapshot(invalid.data(), invalid.size(), snapshot),
             pocket::SnapshotParseResult::UnsupportedProtocolVersion);
-  EXPECT_EQ(snapshot.generatedAtEpoch, 42);
+  EXPECT_EQ(snapshot.generatedAtEpoch, 1774252800U);
+  EXPECT_STREQ(snapshot.itemAt(*snapshot.sectionAt(0), 0)->title, originalItem->title);
+}
+
+TEST(PocketSnapshotParser, EmptySnapshotReleasesDynamicItems) {
+  pocket::PocketSnapshot snapshot;
+  ASSERT_EQ(pocket::parsePocketSnapshot(VALID, std::strlen(VALID), snapshot), pocket::SnapshotParseResult::Success);
+  ASSERT_NE(snapshot.items, nullptr);
+  pocket::loadEmptySnapshot(snapshot);
+  EXPECT_EQ(snapshot.items, nullptr);
+  EXPECT_EQ(snapshot.itemCount, 0);
+  EXPECT_TRUE(snapshot.fixture);
 }
 
 TEST(PocketSnapshotParser, RejectsOversizedSection) {
@@ -89,6 +106,7 @@ TEST(PocketSnapshotCache, AlternatesSlotsAndLoadsNewestVerifiedSnapshot) {
   const auto loaded = cache.loadBest(snapshot);
   EXPECT_EQ(loaded.generation, 2);
   EXPECT_EQ(snapshot.itemCount, 2);
+  EXPECT_LT(sizeof(cache), 64U);
 }
 
 }  // namespace

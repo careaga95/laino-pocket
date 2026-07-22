@@ -2,6 +2,8 @@
 
 #include <cstring>
 #include <limits>
+#include <memory>
+#include <new>
 
 #include "PocketSnapshotParser.h"
 
@@ -87,14 +89,18 @@ CacheOutcome failureFor(const CacheOutcome& a, const CacheOutcome& b) {
 
 }  // namespace
 
-CacheOutcome PocketSnapshotCache::inspect(const CacheSlot slot, size_t* payloadLength) {
+CacheOutcome PocketSnapshotCache::inspect(const CacheSlot slot, char* jsonBuffer, const size_t jsonCapacity,
+                                          size_t* payloadLength) {
   if (payloadLength != nullptr) *payloadLength = 0;
+  if (jsonBuffer == nullptr || jsonCapacity != MAX_SNAPSHOT_JSON_BYTES + 1) {
+    return {CacheResult::ReadFailure, slot, 0};
+  }
   uint8_t header[CACHE_HEADER_BYTES]{};
   size_t headerRead = 0;
   size_t payloadRead = 0;
   size_t fileSize = 0;
-  const CacheResult read = storage.read(pathFor(slot), header, sizeof(header), headerRead, jsonBuffer,
-                                        sizeof(jsonBuffer) - 1, payloadRead, fileSize);
+  const CacheResult read = storage.read(pathFor(slot), header, sizeof(header), headerRead, jsonBuffer, jsonCapacity - 1,
+                                        payloadRead, fileSize);
   if (read != CacheResult::Success) return {read, slot, 0};
   if (payloadRead <= MAX_SNAPSHOT_JSON_BYTES) jsonBuffer[payloadRead] = '\0';
   uint64_t generation = 0;
@@ -105,17 +111,19 @@ CacheOutcome PocketSnapshotCache::inspect(const CacheSlot slot, size_t* payloadL
 
 CacheOutcome PocketSnapshotCache::loadBest(PocketSnapshot& destination) {
   if (!storage.available()) return {CacheResult::SdUnavailable, CacheSlot::None, 0};
-  const CacheOutcome a = inspect(CacheSlot::A);
-  const CacheOutcome b = inspect(CacheSlot::B);
+  std::unique_ptr<char[]> jsonBuffer(new (std::nothrow) char[MAX_SNAPSHOT_JSON_BYTES + 1]);
+  if (!jsonBuffer) return {CacheResult::ReadFailure, CacheSlot::None, 0};
+  const CacheOutcome a = inspect(CacheSlot::A, jsonBuffer.get(), MAX_SNAPSHOT_JSON_BYTES + 1);
+  const CacheOutcome b = inspect(CacheSlot::B, jsonBuffer.get(), MAX_SNAPSHOT_JSON_BYTES + 1);
   if (a.result != CacheResult::Success && b.result != CacheResult::Success) return failureFor(a, b);
   const CacheOutcome best =
       b.result == CacheResult::Success && (a.result != CacheResult::Success || b.generation > a.generation) ? b : a;
   size_t payloadLength = 0;
-  const CacheOutcome verified = inspect(best.slot, &payloadLength);
+  const CacheOutcome verified = inspect(best.slot, jsonBuffer.get(), MAX_SNAPSHOT_JSON_BYTES + 1, &payloadLength);
   if (verified.result != CacheResult::Success || verified.generation != best.generation) {
     return {CacheResult::ReadFailure, best.slot, 0};
   }
-  if (parsePocketSnapshot(jsonBuffer, payloadLength, destination) != SnapshotParseResult::Success) {
+  if (parsePocketSnapshot(jsonBuffer.get(), payloadLength, destination) != SnapshotParseResult::Success) {
     return {CacheResult::InvalidJsonBundle, best.slot, 0};
   }
   return best;
@@ -126,8 +134,10 @@ CacheOutcome PocketSnapshotCache::store(const char* json, const size_t jsonLengt
     return {CacheResult::InvalidJsonBundle, CacheSlot::None, 0};
   }
   if (!storage.available()) return {CacheResult::SdUnavailable, CacheSlot::None, 0};
-  const CacheOutcome a = inspect(CacheSlot::A);
-  const CacheOutcome b = inspect(CacheSlot::B);
+  std::unique_ptr<char[]> jsonBuffer(new (std::nothrow) char[MAX_SNAPSHOT_JSON_BYTES + 1]);
+  if (!jsonBuffer) return {CacheResult::ReadFailure, CacheSlot::None, 0};
+  const CacheOutcome a = inspect(CacheSlot::A, jsonBuffer.get(), MAX_SNAPSHOT_JSON_BYTES + 1);
+  const CacheOutcome b = inspect(CacheSlot::B, jsonBuffer.get(), MAX_SNAPSHOT_JSON_BYTES + 1);
   CacheOutcome newest{CacheResult::NoValidSlot, CacheSlot::None, 0};
   if (a.result == CacheResult::Success) newest = a;
   if (b.result == CacheResult::Success && (newest.slot == CacheSlot::None || b.generation > newest.generation)) {
@@ -144,7 +154,7 @@ CacheOutcome PocketSnapshotCache::store(const char* json, const size_t jsonLengt
   if (storage.write(pathFor(target), header, sizeof(header), json, jsonLength) != CacheResult::Success) {
     return {CacheResult::WriteFailure, target, generation};
   }
-  const CacheOutcome verified = inspect(target);
+  const CacheOutcome verified = inspect(target, jsonBuffer.get(), MAX_SNAPSHOT_JSON_BYTES + 1);
   return verified.result == CacheResult::Success && verified.generation == generation
              ? CacheOutcome{CacheResult::Success, target, generation}
              : CacheOutcome{CacheResult::VerificationFailure, target, generation};
