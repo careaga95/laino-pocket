@@ -5,6 +5,7 @@
 #include <cstring>
 #include <memory>
 #include <new>
+#include <utility>
 
 namespace pocket {
 namespace {
@@ -88,9 +89,7 @@ SnapshotParseResult parsePocketSnapshot(const char* json, const size_t jsonLengt
     return SnapshotParseResult::UnsupportedProtocolVersion;
   }
 
-  std::unique_ptr<PocketSnapshot> holder(new (std::nothrow) PocketSnapshot());
-  if (!holder) return SnapshotParseResult::OutOfMemory;
-  PocketSnapshot& parsed = *holder;
+  PocketSnapshot parsed;
   SnapshotParseResult result = copyText(root["snapshotId"], parsed.snapshotId);
   if (result != SnapshotParseResult::Success) return result;
   if (!root["generatedAtEpoch"].is<uint64_t>() || !root["refreshAfterEpoch"].is<uint64_t>()) {
@@ -114,29 +113,44 @@ SnapshotParseResult parsePocketSnapshot(const char* json, const size_t jsonLengt
   if (!sectionsValue.is<JsonArrayConst>()) return SnapshotParseResult::MissingRequiredField;
   JsonArrayConst sections = sectionsValue.as<JsonArrayConst>();
   if (sections.size() == 0 || sections.size() > MAX_SNAPSHOT_SECTIONS) return SnapshotParseResult::TooManySections;
+
+  size_t totalItems = 0;
   uint8_t seen = 0;
   for (JsonVariantConst sectionValue : sections) {
     if (!sectionValue.is<JsonObjectConst>()) return SnapshotParseResult::WrongFieldType;
     JsonObjectConst source = sectionValue.as<JsonObjectConst>();
     if (!source["id"].is<const char*>()) return SnapshotParseResult::MissingRequiredField;
-    SnapshotSection& section = parsed.sections[parsed.sectionCount];
+    SnapshotSectionId id;
     size_t maximum = 0;
-    if (!sectionId(source["id"].as<const char*>(), section.id, maximum)) return SnapshotParseResult::InvalidValue;
-    const uint8_t bit = static_cast<uint8_t>(1U << static_cast<uint8_t>(section.id));
+    if (!sectionId(source["id"].as<const char*>(), id, maximum)) return SnapshotParseResult::InvalidValue;
+    const uint8_t bit = static_cast<uint8_t>(1U << static_cast<uint8_t>(id));
     if ((seen & bit) != 0) return SnapshotParseResult::DuplicateSection;
     seen |= bit;
-    result = copyText(source["label"], section.label);
-    if (result != SnapshotParseResult::Success) return result;
     if (!source["total"].is<unsigned>()) return SnapshotParseResult::MissingRequiredField;
     const unsigned total = source["total"].as<unsigned>();
-    if (total > UINT8_MAX) return SnapshotParseResult::InvalidValue;
-    section.total = static_cast<uint8_t>(total);
     JsonVariantConst itemsValue = source["items"];
     if (!itemsValue.is<JsonArrayConst>()) return SnapshotParseResult::MissingRequiredField;
     JsonArrayConst items = itemsValue.as<JsonArrayConst>();
-    if (items.size() > maximum || parsed.itemCount + items.size() > MAX_SNAPSHOT_ITEMS || total < items.size()) {
+    if (items.size() > maximum || totalItems + items.size() > MAX_SNAPSHOT_ITEMS || total < items.size()) {
       return SnapshotParseResult::TooManyItems;
     }
+    totalItems += items.size();
+  }
+
+  if (totalItems > 0) {
+    parsed.items.reset(new (std::nothrow) SnapshotItem[totalItems]);
+    if (!parsed.items) return SnapshotParseResult::OutOfMemory;
+  }
+
+  for (JsonVariantConst sectionValue : sections) {
+    JsonObjectConst source = sectionValue.as<JsonObjectConst>();
+    SnapshotSection& section = parsed.sections[parsed.sectionCount];
+    size_t maximum = 0;
+    sectionId(source["id"].as<const char*>(), section.id, maximum);
+    result = copyText(source["label"], section.label);
+    if (result != SnapshotParseResult::Success) return result;
+    section.total = source["total"].as<unsigned>();
+    JsonArrayConst items = source["items"].as<JsonArrayConst>();
     section.firstItem = parsed.itemCount;
     for (JsonVariantConst itemValue : items) {
       if (!itemValue.is<JsonObjectConst>()) return SnapshotParseResult::WrongFieldType;
@@ -148,13 +162,13 @@ SnapshotParseResult parsePocketSnapshot(const char* json, const size_t jsonLengt
     ++parsed.sectionCount;
   }
   parsed.fixture = false;
-  destination = parsed;
+  destination = std::move(parsed);
   return SnapshotParseResult::Success;
 }
 
 SnapshotParseResult validatePocketSnapshot(const char* json, const size_t jsonLength) {
-  std::unique_ptr<PocketSnapshot> parsed(new (std::nothrow) PocketSnapshot());
-  return parsed ? parsePocketSnapshot(json, jsonLength, *parsed) : SnapshotParseResult::OutOfMemory;
+  PocketSnapshot parsed;
+  return parsePocketSnapshot(json, jsonLength, parsed);
 }
 
 const char* snapshotParseResultName(const SnapshotParseResult result) {

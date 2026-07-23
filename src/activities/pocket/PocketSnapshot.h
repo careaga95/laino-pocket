@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 namespace pocket {
 
@@ -12,7 +13,7 @@ inline constexpr size_t MAX_SNAPSHOT_SECTIONS = 4;
 inline constexpr size_t MAX_SNAPSHOT_ID_BYTES = 24;
 inline constexpr size_t MAX_SNAPSHOT_TITLE_BYTES = 72;
 inline constexpr size_t MAX_SNAPSHOT_SUBTITLE_BYTES = 96;
-inline constexpr size_t MAX_SNAPSHOT_DETAIL_LINES = 2;
+inline constexpr size_t MAX_SNAPSHOT_DETAIL_LINES = 3;
 inline constexpr size_t MAX_SNAPSHOT_DETAIL_BYTES = 128;
 
 enum class SnapshotSourceState : uint8_t { Fresh, Partial, Unavailable };
@@ -31,7 +32,7 @@ struct SnapshotSection {
   char label[24]{};
   uint8_t firstItem = 0;
   uint8_t itemCount = 0;
-  uint8_t total = 0;
+  uint32_t total = 0;
 };
 
 struct PocketSnapshot {
@@ -42,7 +43,7 @@ struct PocketSnapshot {
   SnapshotSourceState tasksState = SnapshotSourceState::Unavailable;
   SnapshotSourceState commitmentsState = SnapshotSourceState::Unavailable;
   SnapshotSection sections[MAX_SNAPSHOT_SECTIONS]{};
-  SnapshotItem items[MAX_SNAPSHOT_ITEMS]{};
+  std::unique_ptr<SnapshotItem[]> items;
   uint8_t sectionCount = 0;
   uint8_t itemCount = 0;
   bool fixture = false;
@@ -53,11 +54,12 @@ struct PocketSnapshot {
 
   [[nodiscard]] const SnapshotItem* itemAt(const SnapshotSection& section, const size_t index) const {
     const size_t absolute = static_cast<size_t>(section.firstItem) + index;
-    return index < section.itemCount && absolute < itemCount ? &items[absolute] : nullptr;
+    return items && index < section.itemCount && absolute < itemCount ? &items[absolute] : nullptr;
   }
 };
 
-static_assert(sizeof(PocketSnapshot) <= 26000, "Pocket snapshot steady-state RAM budget exceeded");
+static_assert(sizeof(PocketSnapshot) <= 256, "Pocket snapshot metadata RAM budget exceeded");
+static_assert(sizeof(SnapshotItem) * MAX_SNAPSHOT_ITEMS <= 35000, "Pocket snapshot item RAM budget exceeded");
 
 void loadEmptySnapshot(PocketSnapshot& destination);
 bool snapshotHasPartialSource(const PocketSnapshot& snapshot);

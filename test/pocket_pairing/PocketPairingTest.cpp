@@ -891,6 +891,21 @@ TEST(PocketBundleLoggingTest, SyncLogStatementsNeverInterpolateCredentialOrRespo
   }
 }
 
+TEST(PocketInteractionTest, SyncIsAVisibleFrontButtonAndSideButtonsOwnListNavigation) {
+  std::ifstream input(POCKET_ACTIVITY_SOURCE);
+  ASSERT_TRUE(input.is_open());
+  const std::string source((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+
+  EXPECT_EQ(source.find("getHeldTime"), std::string::npos);
+  EXPECT_EQ(source.find("LONG_PRESS"), std::string::npos);
+  EXPECT_NE(source.find("mappedInput.wasReleased(MappedInputManager::Button::Right)"), std::string::npos);
+  EXPECT_NE(source.find("mappedInput.wasReleased(MappedInputManager::Button::Up)"), std::string::npos);
+  EXPECT_NE(source.find("mappedInput.wasReleased(MappedInputManager::Button::Down)"), std::string::npos);
+  EXPECT_NE(source.find("const char* syncLabel"), std::string::npos);
+  EXPECT_NE(source.find("tr(STR_POCKET_SYNC)"), std::string::npos);
+  EXPECT_NE(source.find("GUI.drawSideButtonHints"), std::string::npos);
+}
+
 TEST(PocketPairingRenderingTest, UnpairWarningIsWrappedInsideTheDisplayInsteadOfDrawnAsOneLine) {
   std::ifstream input(PAIRING_ACTIVITY_SOURCE);
   ASSERT_TRUE(input.is_open());

@@ -5,7 +5,7 @@
 namespace pocket {
 
 void loadEmptySnapshot(PocketSnapshot& destination) {
-  std::memset(&destination, 0, sizeof(destination));
+  destination = PocketSnapshot{};
   destination.fixture = true;
   constexpr SnapshotSectionId ids[] = {SnapshotSectionId::Agenda, SnapshotSectionId::Tasks, SnapshotSectionId::Waiting,
                                        SnapshotSectionId::Owe};
