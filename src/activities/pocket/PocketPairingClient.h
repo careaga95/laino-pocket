@@ -6,11 +6,23 @@
 
 #include "PocketFirmwareIdentity.h"
 #include "PocketPairingProtocol.h"
+#include "PocketReading.h"
 #include "PocketSnapshot.h"
 
 namespace pocket {
 
 enum class GatewayMethod : uint8_t { Get, Post, Delete };
+enum class GatewaySuccessMediaType : uint8_t { Json, Epub };
+
+class GatewayBodySink {
+ public:
+  virtual ~GatewayBodySink() = default;
+  virtual bool begin(uint32_t contentLength) = 0;
+  virtual bool write(const uint8_t* data, size_t length) = 0;
+  virtual bool finish() = 0;
+  virtual void abort() = 0;
+};
+
 enum class GatewayTransportResult : uint8_t {
   Success,
   NoWifi,
@@ -25,6 +37,7 @@ enum class GatewayTransportResult : uint8_t {
   UnsupportedContentType,
   OversizedResponse,
   ReadFailure,
+  StorageFailure,
 };
 
 struct GatewayRequest {
@@ -36,6 +49,12 @@ struct GatewayRequest {
   // Successful large responses may use caller-owned storage. Non-2xx JSON errors always stay in GatewayResponse.
   char* successBody = nullptr;
   std::size_t successBodyCapacity = 0;
+  // Large binary success bodies stream directly to caller-owned storage.
+  // Non-2xx JSON errors always remain bounded by GatewayResponse::body.
+  GatewayBodySink* successSink = nullptr;
+  uint32_t successSinkMaximumBytes = 0;
+  GatewaySuccessMediaType successMediaType = GatewaySuccessMediaType::Json;
+  uint32_t timeoutMs = 13000;
 };
 
 struct GatewayResponse {
@@ -104,6 +123,10 @@ class PairingClient {
                              std::size_t jsonCapacity, std::size_t& jsonLength);
   PocketClientOutcome snapshot(const char* bearer, const std::atomic<bool>& cancelled, char* json,
                                std::size_t jsonCapacity, std::size_t& jsonLength);
+  PocketClientOutcome readingManifest(const char* bearer, const std::atomic<bool>& cancelled, char* json,
+                                      std::size_t jsonCapacity, std::size_t& jsonLength);
+  PocketClientOutcome readingContent(const char* bearer, const ReadingItem& item, GatewayBodySink& sink,
+                                     const std::atomic<bool>& cancelled);
 
  private:
   PocketGatewayTransport& transport;
