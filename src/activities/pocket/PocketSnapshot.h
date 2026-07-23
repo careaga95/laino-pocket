@@ -15,6 +15,8 @@ inline constexpr size_t MAX_SNAPSHOT_TITLE_BYTES = 72;
 inline constexpr size_t MAX_SNAPSHOT_SUBTITLE_BYTES = 96;
 inline constexpr size_t MAX_SNAPSHOT_DETAIL_LINES = 3;
 inline constexpr size_t MAX_SNAPSHOT_DETAIL_BYTES = 128;
+inline constexpr size_t MAX_TODAY_PRIORITIES = 3;
+inline constexpr uint8_t INVALID_SNAPSHOT_ITEM_INDEX = UINT8_MAX;
 
 enum class SnapshotSourceState : uint8_t { Fresh, Partial, Unavailable };
 enum class SnapshotSectionId : uint8_t { Agenda, Tasks, Waiting, Owe };
@@ -44,8 +46,12 @@ struct PocketSnapshot {
   SnapshotSourceState commitmentsState = SnapshotSourceState::Unavailable;
   SnapshotSection sections[MAX_SNAPSHOT_SECTIONS]{};
   std::unique_ptr<SnapshotItem[]> items;
+  uint8_t nextMeetingIndex = INVALID_SNAPSHOT_ITEM_INDEX;
+  uint8_t priorityIndices[MAX_TODAY_PRIORITIES] = {INVALID_SNAPSHOT_ITEM_INDEX, INVALID_SNAPSHOT_ITEM_INDEX,
+                                                   INVALID_SNAPSHOT_ITEM_INDEX};
   uint8_t sectionCount = 0;
   uint8_t itemCount = 0;
+  uint8_t priorityCount = 0;
   bool fixture = false;
 
   [[nodiscard]] const SnapshotSection* sectionAt(const size_t index) const {
@@ -55,6 +61,16 @@ struct PocketSnapshot {
   [[nodiscard]] const SnapshotItem* itemAt(const SnapshotSection& section, const size_t index) const {
     const size_t absolute = static_cast<size_t>(section.firstItem) + index;
     return items && index < section.itemCount && absolute < itemCount ? &items[absolute] : nullptr;
+  }
+
+  [[nodiscard]] const SnapshotItem* nextMeeting() const {
+    return items && nextMeetingIndex < itemCount ? &items[nextMeetingIndex] : nullptr;
+  }
+
+  [[nodiscard]] const SnapshotItem* priorityAt(const size_t index) const {
+    if (!items || index >= priorityCount) return nullptr;
+    const uint8_t absolute = priorityIndices[index];
+    return absolute < itemCount ? &items[absolute] : nullptr;
   }
 };
 

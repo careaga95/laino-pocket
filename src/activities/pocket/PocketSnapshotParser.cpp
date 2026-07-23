@@ -73,6 +73,63 @@ SnapshotParseResult parseItem(JsonObjectConst object, SnapshotItem& item) {
   return SnapshotParseResult::Success;
 }
 
+struct TodayContract {
+  char nextMeetingId[MAX_SNAPSHOT_ID_BYTES + 1]{};
+  char priorityIds[MAX_TODAY_PRIORITIES][MAX_SNAPSHOT_ID_BYTES + 1]{};
+  uint32_t counts[MAX_SNAPSHOT_SECTIONS]{};
+  uint8_t priorityCount = 0;
+  bool hasNextMeeting = false;
+};
+
+SnapshotParseResult parseToday(JsonVariantConst value, TodayContract& today) {
+  if (!value.is<JsonObjectConst>()) return SnapshotParseResult::MissingRequiredField;
+  JsonObjectConst object = value.as<JsonObjectConst>();
+
+  JsonVariantConst nextMeeting = object["nextMeeting"];
+  if (!nextMeeting.isNull()) {
+    if (!nextMeeting.is<JsonObjectConst>()) return SnapshotParseResult::WrongFieldType;
+    const SnapshotParseResult result = copyText(nextMeeting.as<JsonObjectConst>()["id"], today.nextMeetingId);
+    if (result != SnapshotParseResult::Success) return result;
+    today.hasNextMeeting = true;
+  }
+
+  JsonVariantConst prioritiesValue = object["priorities"];
+  if (!prioritiesValue.is<JsonArrayConst>()) return SnapshotParseResult::MissingRequiredField;
+  JsonArrayConst priorities = prioritiesValue.as<JsonArrayConst>();
+  if (priorities.size() > MAX_TODAY_PRIORITIES) return SnapshotParseResult::TooManyItems;
+  for (JsonVariantConst priority : priorities) {
+    if (!priority.is<JsonObjectConst>()) return SnapshotParseResult::WrongFieldType;
+    const SnapshotParseResult result =
+        copyText(priority.as<JsonObjectConst>()["id"], today.priorityIds[today.priorityCount]);
+    if (result != SnapshotParseResult::Success) return result;
+    ++today.priorityCount;
+  }
+
+  JsonVariantConst countsValue = object["counts"];
+  if (!countsValue.is<JsonObjectConst>()) return SnapshotParseResult::MissingRequiredField;
+  JsonObjectConst counts = countsValue.as<JsonObjectConst>();
+  constexpr const char* keys[MAX_SNAPSHOT_SECTIONS] = {"agenda", "tasks", "waiting", "owe"};
+  for (size_t index = 0; index < MAX_SNAPSHOT_SECTIONS; ++index) {
+    if (!counts[keys[index]].is<unsigned>()) return SnapshotParseResult::MissingRequiredField;
+    today.counts[index] = counts[keys[index]].as<unsigned>();
+  }
+  return SnapshotParseResult::Success;
+}
+
+uint8_t findItemIndex(const PocketSnapshot& snapshot, const SnapshotSectionId sectionId, const char* id) {
+  for (size_t sectionIndex = 0; sectionIndex < snapshot.sectionCount; ++sectionIndex) {
+    const SnapshotSection& section = snapshot.sections[sectionIndex];
+    if (section.id != sectionId) continue;
+    for (size_t itemIndex = 0; itemIndex < section.itemCount; ++itemIndex) {
+      const size_t absolute = static_cast<size_t>(section.firstItem) + itemIndex;
+      if (absolute < snapshot.itemCount && std::strcmp(snapshot.items[absolute].id, id) == 0) {
+        return static_cast<uint8_t>(absolute);
+      }
+    }
+  }
+  return INVALID_SNAPSHOT_ITEM_INDEX;
+}
+
 }  // namespace
 
 SnapshotParseResult parsePocketSnapshot(const char* json, const size_t jsonLength, PocketSnapshot& destination) {
@@ -108,6 +165,10 @@ SnapshotParseResult parsePocketSnapshot(const char* json, const size_t jsonLengt
       !sourceState(status["commitments"], parsed.commitmentsState)) {
     return SnapshotParseResult::InvalidValue;
   }
+
+  TodayContract today;
+  result = parseToday(root["today"], today);
+  if (result != SnapshotParseResult::Success) return result;
 
   JsonVariantConst sectionsValue = root["sections"];
   if (!sectionsValue.is<JsonArrayConst>()) return SnapshotParseResult::MissingRequiredField;
@@ -161,6 +222,23 @@ SnapshotParseResult parsePocketSnapshot(const char* json, const size_t jsonLengt
     }
     ++parsed.sectionCount;
   }
+
+  for (size_t sectionIndex = 0; sectionIndex < parsed.sectionCount; ++sectionIndex) {
+    const SnapshotSection& section = parsed.sections[sectionIndex];
+    if (section.total != today.counts[static_cast<size_t>(section.id)]) {
+      return SnapshotParseResult::InvalidValue;
+    }
+  }
+  if (today.hasNextMeeting) {
+    parsed.nextMeetingIndex = findItemIndex(parsed, SnapshotSectionId::Agenda, today.nextMeetingId);
+    if (parsed.nextMeetingIndex == INVALID_SNAPSHOT_ITEM_INDEX) return SnapshotParseResult::InvalidValue;
+  }
+  for (size_t index = 0; index < today.priorityCount; ++index) {
+    const uint8_t itemIndex = findItemIndex(parsed, SnapshotSectionId::Tasks, today.priorityIds[index]);
+    if (itemIndex == INVALID_SNAPSHOT_ITEM_INDEX) return SnapshotParseResult::InvalidValue;
+    parsed.priorityIndices[parsed.priorityCount++] = itemIndex;
+  }
+
   parsed.fixture = false;
   destination = std::move(parsed);
   return SnapshotParseResult::Success;

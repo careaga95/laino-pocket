@@ -139,6 +139,14 @@ bool isJsonContentType(const char* begin, const char* end) {
   return equalsIgnoreCase(begin, static_cast<std::size_t>(mediaEnd - begin), "application/json");
 }
 
+bool isEpubContentType(const char* begin, const char* end) {
+  trim(begin, end);
+  const char* semicolon = static_cast<const char*>(std::memchr(begin, ';', static_cast<std::size_t>(end - begin)));
+  const char* mediaEnd = semicolon == nullptr ? end : semicolon;
+  while (mediaEnd > begin && (mediaEnd[-1] == ' ' || mediaEnd[-1] == '\t')) --mediaEnd;
+  return equalsIgnoreCase(begin, static_cast<std::size_t>(mediaEnd - begin), "application/epub+zip");
+}
+
 const char* methodName(const GatewayMethod method) {
   switch (method) {
     case GatewayMethod::Get:
@@ -155,9 +163,13 @@ class RequestSession {
  public:
   RequestSession(const std::atomic<bool>& cancelled, GatewayResponse& response)
       : cancelled(cancelled), response(response), startedAt(millis()) {}
-  ~RequestSession() { client.stop(); }
+  ~RequestSession() {
+    client.stop();
+    if (sinkStarted && !sinkCommitted && sink != nullptr) sink->abort();
+  }
 
   void run(const GatewayRequest& request) {
+    requestTimeoutMs = request.timeoutMs;
     if (checkTransportControl(TransportCheckpoint::BeforeRequest, cancelled.load(std::memory_order_acquire), 0) ==
         TransportControlDecision::Cancelled) {
       return finish(GatewayTransportResult::Cancelled);
@@ -165,14 +177,22 @@ class RequestSession {
     if (WiFi.status() != WL_CONNECTED) return finish(GatewayTransportResult::NoWifi);
     if (ESP.getFreeHeap() < MIN_TLS_HEAP_BYTES) return finish(GatewayTransportResult::LowMemory);
     const bool hasSuccessBody = request.successBody != nullptr;
+    const bool hasSuccessSink = request.successSink != nullptr;
     if (request.path == nullptr || request.path[0] != '/' || std::strchr(request.path, '?') != nullptr ||
         request.jsonBodyLength > 256 || (request.jsonBodyLength > 0 && request.jsonBody == nullptr) ||
         hasSuccessBody != (request.successBodyCapacity > 0) ||
-        (hasSuccessBody && (request.successBodyCapacity < 2 ||
-                            request.successBodyCapacity > POCKET_MAX_LARGE_RESPONSE_BODY_BYTES + 1))) {
+        (hasSuccessBody &&
+         (request.successBodyCapacity < 2 || request.successBodyCapacity > POCKET_MAX_LARGE_RESPONSE_BODY_BYTES + 1)) ||
+        (hasSuccessBody && hasSuccessSink) || hasSuccessSink != (request.successSinkMaximumBytes > 0) ||
+        (hasSuccessSink && (request.successMediaType != GatewaySuccessMediaType::Epub ||
+                            request.successSinkMaximumBytes > POCKET_MAX_BINARY_RESPONSE_BODY_BYTES)) ||
+        (!hasSuccessSink && request.successMediaType != GatewaySuccessMediaType::Json) || requestTimeoutMs < 1000 ||
+        requestTimeoutMs > POCKET_MAX_REQUEST_TIMEOUT_MS) {
       return finish(GatewayTransportResult::WriteFailure, ERROR_MALFORMED);
     }
     if (hasSuccessBody) request.successBody[0] = '\0';
+    sink = request.successSink;
+    sinkMaximumBytes = request.successSinkMaximumBytes;
 
     IPAddress address;
     const IoStatus dns = resolve(address);
@@ -209,15 +229,20 @@ class RequestSession {
   uint32_t chunkRemaining = 0;
   char* body = response.body;
   std::size_t bodyCapacity = sizeof(response.body);
+  GatewayBodySink* sink = nullptr;
+  uint32_t streamedBodyLength = 0;
+  uint32_t sinkMaximumBytes = 0;
+  uint32_t requestTimeoutMs = POCKET_TOTAL_REQUEST_TIMEOUT_MS;
+  bool sinkStarted = false;
+  bool sinkCommitted = false;
 
   bool timedOut() const {
-    return checkTransportControl(TransportCheckpoint::ResponseRead, false,
-                                 static_cast<uint32_t>(millis() - startedAt)) ==
-           TransportControlDecision::TimedOut;
+    return checkTransportControl(TransportCheckpoint::ResponseRead, false, static_cast<uint32_t>(millis() - startedAt),
+                                 requestTimeoutMs) == TransportControlDecision::TimedOut;
   }
   uint32_t remainingMs() const {
     const uint32_t elapsed = static_cast<uint32_t>(millis() - startedAt);
-    return elapsed >= POCKET_TOTAL_REQUEST_TIMEOUT_MS ? 0 : POCKET_TOTAL_REQUEST_TIMEOUT_MS - elapsed;
+    return elapsed >= requestTimeoutMs ? 0 : requestTimeoutMs - elapsed;
   }
   int32_t lastError() {
     char ignored[1];
@@ -250,7 +275,7 @@ class RequestSession {
     while (static_cast<uint32_t>(millis() - dnsStartedAt) < DNS_TIMEOUT_MS) {
       const TransportControlDecision control =
           checkTransportControl(TransportCheckpoint::DnsWait, cancelled.load(std::memory_order_acquire),
-                                static_cast<uint32_t>(millis() - startedAt));
+                                static_cast<uint32_t>(millis() - startedAt), requestTimeoutMs);
       if (control == TransportControlDecision::Cancelled) return IoStatus::Cancelled;
       if (control == TransportControlDecision::TimedOut) return IoStatus::Timeout;
       const int status = dnsState.status.load(std::memory_order_acquire);
@@ -286,10 +311,12 @@ class RequestSession {
 
   bool writeRequest(const GatewayRequest& request) {
     char headers[512];
+    const char* accept =
+        request.successMediaType == GatewaySuccessMediaType::Epub ? "application/epub+zip" : "application/json";
     int length = std::snprintf(headers, sizeof(headers),
                                "%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: Laino-Pocket/1\r\n"
-                               "Accept: application/json\r\nAccept-Encoding: identity\r\nConnection: close\r\n",
-                               methodName(request.method), request.path, GATEWAY_HOST);
+                               "Accept: %s\r\nAccept-Encoding: identity\r\nConnection: close\r\n",
+                               methodName(request.method), request.path, GATEWAY_HOST, accept);
     if (length <= 0 || static_cast<std::size_t>(length) >= sizeof(headers)) {
       finish(GatewayTransportResult::WriteFailure, ERROR_MALFORMED);
       return false;
@@ -329,7 +356,7 @@ class RequestSession {
     while (true) {
       const TransportControlDecision control =
           checkTransportControl(TransportCheckpoint::ResponseRead, cancelled.load(std::memory_order_acquire),
-                                static_cast<uint32_t>(millis() - startedAt));
+                                static_cast<uint32_t>(millis() - startedAt), requestTimeoutMs);
       if (control == TransportControlDecision::Cancelled) return IoStatus::Cancelled;
       if (control == TransportControlDecision::TimedOut) return IoStatus::Timeout;
       const int available = client.available();
@@ -361,7 +388,7 @@ class RequestSession {
     while (true) {
       const TransportControlDecision control =
           checkTransportControl(TransportCheckpoint::ResponseRead, cancelled.load(std::memory_order_acquire),
-                                static_cast<uint32_t>(millis() - startedAt));
+                                static_cast<uint32_t>(millis() - startedAt), requestTimeoutMs);
       if (control == TransportControlDecision::Cancelled) return IoStatus::Cancelled;
       if (control == TransportControlDecision::TimedOut) return IoStatus::Timeout;
       const int available = client.available();
@@ -411,6 +438,7 @@ class RequestSession {
     bool sawTransfer = false;
     bool sawContentType = false;
     bool jsonContentType = false;
+    bool epubContentType = false;
     bool sawRetryAfter = false;
     while (true) {
       io = readLine(line, sizeof(line), length);
@@ -439,6 +467,7 @@ class RequestSession {
         if (sawContentType) return finish(GatewayTransportResult::MalformedHttp, ERROR_MALFORMED);
         sawContentType = true;
         jsonContentType = isJsonContentType(valueBegin, valueEnd);
+        epubContentType = isEpubContentType(valueBegin, valueEnd);
       } else if (equalsIgnoreCase(line, nameLength, "Retry-After")) {
         uint32_t value = 0;
         if (sawRetryAfter || !parseDecimal(valueBegin, valueEnd, value)) {
@@ -448,12 +477,21 @@ class RequestSession {
         response.retryAfter = static_cast<uint8_t>(value > 255 ? 255 : value);
       }
     }
+    const ResponseEnvelope responseEnvelope{response.httpStatus, sawLength,        sawTransfer,    sawContentType,
+                                            jsonContentType,     contentRemaining, epubContentType};
+    const bool binarySuccess =
+        response.httpStatus >= 200 && response.httpStatus <= 299 && request.successSink != nullptr;
     const GatewayTransportResult envelope =
-        validateResponseEnvelope({response.httpStatus, sawLength, sawTransfer, sawContentType, jsonContentType,
-                                  contentRemaining},
-                                 static_cast<uint32_t>(bodyCapacity - 1));
+        binarySuccess ? validateBinaryResponseEnvelope(responseEnvelope, request.successSinkMaximumBytes)
+                      : validateResponseEnvelope(responseEnvelope, static_cast<uint32_t>(bodyCapacity - 1));
     if (envelope != GatewayTransportResult::Success) {
       return finish(envelope, envelope == GatewayTransportResult::MalformedHttp ? ERROR_MALFORMED : 0);
+    }
+    if (binarySuccess) {
+      sinkStarted = true;
+      if (!sink->begin(static_cast<uint32_t>(contentRemaining))) {
+        return finish(GatewayTransportResult::StorageFailure);
+      }
     }
     if (response.httpStatus == 204) {
       if (chunked || contentRemaining > 0) return finish(GatewayTransportResult::MalformedHttp, ERROR_MALFORMED);
@@ -518,14 +556,31 @@ class RequestSession {
 
   void readBody() {
     while (true) {
-      uint8_t buffer[128];
+      // A 1 KiB block keeps SD mutex/write overhead bounded for multi-megabyte
+      // EPUBs while staying within the dedicated 8 KiB worker stack.
+      uint8_t buffer[1024];
       std::size_t count = 0;
       const IoStatus status = readBodyPart(buffer, sizeof(buffer), count);
       if (status == IoStatus::End) {
+        if (sinkStarted) {
+          if (!sink->finish()) return finish(GatewayTransportResult::StorageFailure);
+          sinkCommitted = true;
+          return finish(GatewayTransportResult::Success);
+        }
         body[response.bodyLength] = '\0';
         return finish(GatewayTransportResult::Success);
       }
       if (status != IoStatus::Ok || count == 0) return failForIo(status == IoStatus::Ok ? IoStatus::Failure : status);
+      if (sinkStarted) {
+        const bool oversized = static_cast<uint64_t>(streamedBodyLength) + count > sinkMaximumBytes;
+        if (oversized || !sink->write(buffer, count)) {
+          secureClear(buffer, sizeof(buffer));
+          return finish(oversized ? GatewayTransportResult::OversizedResponse : GatewayTransportResult::StorageFailure);
+        }
+        streamedBodyLength += static_cast<uint32_t>(count);
+        secureClear(buffer, sizeof(buffer));
+        continue;
+      }
       if (response.bodyLength + count >= bodyCapacity) {
         secureClear(buffer, sizeof(buffer));
         return finish(GatewayTransportResult::OversizedResponse);

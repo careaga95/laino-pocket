@@ -2,6 +2,7 @@
 
 #include <GfxRenderer.h>
 #include <HalClock.h>
+#include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
@@ -54,6 +55,12 @@ PocketActivity::~PocketActivity() {
     workerContext->releaseReference();
     workerContext = nullptr;
   }
+  if (readingWorkerContext != nullptr) {
+    readingWorkerContext->cancelled.store(true, std::memory_order_release);
+    readingWorkerContext->lifecycle.requestCancel();
+    readingWorkerContext->releaseReference();
+    readingWorkerContext = nullptr;
+  }
   pocket::secureClear(&credential, sizeof(credential));
 }
 
@@ -71,6 +78,12 @@ void PocketActivity::onEnter() {
   todaySelection = 0;
   sectionIndex = 0;
   itemIndex = 0;
+  detailFromToday = false;
+  sectionFromToday = false;
+  readingIndex = 0;
+  loadEmptyReadingManifest(readings);
+  workerKind = WorkerKind::None;
+  pendingNetworkAction = PendingNetworkAction::None;
   initialRenderComplete = false;
   reloadCredential();
   autoSyncPending = canSync() && wifiConnected() && refreshDue();
@@ -78,9 +91,15 @@ void PocketActivity::onEnter() {
 }
 
 void PocketActivity::onExit() {
-  if (workerRunning && workerContext != nullptr) {
-    workerContext->cancelled.store(true, std::memory_order_release);
-    workerContext->lifecycle.requestCancel();
+  if (workerRunning) {
+    if (workerContext != nullptr) {
+      workerContext->cancelled.store(true, std::memory_order_release);
+      workerContext->lifecycle.requestCancel();
+    }
+    if (readingWorkerContext != nullptr) {
+      readingWorkerContext->cancelled.store(true, std::memory_order_release);
+      readingWorkerContext->lifecycle.requestCancel();
+    }
     LOG_ERR("PKT", "Activity exit requested before sync worker acknowledgement");
   }
   Activity::onExit();
@@ -116,19 +135,29 @@ void PocketActivity::openHari() {
   });
 }
 
-void PocketActivity::requestSync() {
-  if (!canSync() || workerRunning || pendingAfterWifi) {
+void PocketActivity::requestSync() { requestNetworkAction(PendingNetworkAction::Snapshot); }
+
+void PocketActivity::requestReadingManifestSync() { requestNetworkAction(PendingNetworkAction::ReadingManifest); }
+
+void PocketActivity::requestReadingDownload() { requestNetworkAction(PendingNetworkAction::ReadingDownload); }
+
+void PocketActivity::requestNetworkAction(const PendingNetworkAction action) {
+  if (!canSync() || workerRunning || pendingNetworkAction != PendingNetworkAction::None) {
     if (!canSync() && !workerRunning) openHari();
     return;
   }
   if (wifiConnected()) {
-    startWorker();
+    if (action == PendingNetworkAction::Snapshot)
+      startWorker();
+    else
+      startReadingWorker(action == PendingNetworkAction::ReadingManifest ? pocket::ReadingWorkerOperation::Manifest
+                                                                         : pocket::ReadingWorkerOperation::Download);
     return;
   }
-  pendingAfterWifi = true;
+  pendingNetworkAction = action;
   auto wifi = makeUniqueNoThrow<WifiSelectionActivity>(renderer, mappedInput);
   if (!wifi) {
-    pendingAfterWifi = false;
+    pendingNetworkAction = PendingNetworkAction::None;
     syncNotice = SyncNotice::LowMemory;
     LOG_ERR("PKT", "OOM: WifiSelectionActivity");
     requestUpdate();
@@ -139,9 +168,15 @@ void PocketActivity::requestSync() {
 }
 
 void PocketActivity::onWifiSelectionComplete(const bool connected) {
-  pendingAfterWifi = false;
+  const PendingNetworkAction action = pendingNetworkAction;
+  pendingNetworkAction = PendingNetworkAction::None;
   if (connected && canSync()) {
-    startWorker();
+    if (action == PendingNetworkAction::Snapshot)
+      startWorker();
+    else if (action == PendingNetworkAction::ReadingManifest)
+      startReadingWorker(pocket::ReadingWorkerOperation::Manifest);
+    else if (action == PendingNetworkAction::ReadingDownload)
+      startReadingWorker(pocket::ReadingWorkerOperation::Download);
   } else {
     if (canSync()) syncNotice = SyncNotice::NoWifi;
     requestUpdate();
@@ -163,6 +198,42 @@ void PocketActivity::runWorker(pocket::BundleWorkerContext* context) {
       std::size_t jsonLength = 0;
       context->outcome = client.snapshot(bearer, context->cancelled, context->json, sizeof(context->json), jsonLength);
       context->jsonLength = static_cast<uint16_t>(jsonLength);
+    }
+    pocket::secureClear(bearer, sizeof(bearer));
+  }
+  context->stackMargin = static_cast<uint32_t>(uxTaskGetStackHighWaterMark(nullptr));
+  context->freeHeapAfter = ESP.getFreeHeap();
+  context->minimumFreeHeap = ESP.getMinFreeHeap();
+  context->lifecycle.release();
+  context->releaseReference();
+  vTaskDelete(nullptr);
+}
+
+void PocketActivity::readingWorkerTrampoline(void* context) {
+  runReadingWorker(static_cast<pocket::ReadingWorkerContext*>(context));
+}
+
+void PocketActivity::runReadingWorker(pocket::ReadingWorkerContext* context) {
+  context->freeHeapBefore = ESP.getFreeHeap();
+  {
+    pocket::Esp32PocketGatewayTransport gateway;
+    pocket::PairingClient client(gateway);
+    char bearer[pocket::DEVICE_TOKEN_TEXT_BYTES + 1]{};
+    if (!pocket::encodeBase64UrlToken(context->credential.token, sizeof(context->credential.token), bearer,
+                                      sizeof(bearer))) {
+      context->outcome = {pocket::PocketClientResult::InvalidResponse};
+    } else if (context->operation == pocket::ReadingWorkerOperation::Manifest) {
+      size_t jsonLength = 0;
+      context->outcome =
+          client.readingManifest(bearer, context->cancelled, context->json, sizeof(context->json), jsonLength);
+      context->jsonLength = static_cast<uint16_t>(jsonLength);
+    } else {
+      pocket::PocketReadingFileSink sink(context->item);
+      context->outcome = client.readingContent(bearer, context->item, sink, context->cancelled);
+      context->downloadResult = sink.result();
+      if (context->downloadResult == pocket::ReadingDownloadResult::Success) {
+        std::snprintf(context->downloadedPath, sizeof(context->downloadedPath), "%s", sink.path());
+      }
     }
     pocket::secureClear(bearer, sizeof(bearer));
   }
@@ -197,6 +268,7 @@ bool PocketActivity::startWorker() {
     return false;
   }
   workerRunning = true;
+  workerKind = WorkerKind::Snapshot;
   syncNotice = SyncNotice::Updating;
   workerContext->addReference();
   if (xTaskCreate(workerTrampoline, "PocketSync", 8192, workerContext, 1, &workerHandle) == pdPASS) {
@@ -208,6 +280,7 @@ bool PocketActivity::startWorker() {
   workerContext->releaseReference();
   workerContext = nullptr;
   workerRunning = false;
+  workerKind = WorkerKind::None;
   restoreCachedSnapshot();
   syncNotice = SyncNotice::LowMemory;
   LOG_ERR("PKT", "Failed to create bundle sync worker");
@@ -215,8 +288,59 @@ bool PocketActivity::startWorker() {
   return false;
 }
 
+bool PocketActivity::startReadingWorker(const pocket::ReadingWorkerOperation operation) {
+  if (workerRunning || readingWorkerContext != nullptr || !canSync() || view != View::ReadingList) return false;
+  pocket::ReadingItem selected{};
+  if (operation == pocket::ReadingWorkerOperation::Download) {
+    const auto* item = readings.itemAt(readingIndex);
+    if (item == nullptr) return false;
+    selected = *item;
+  }
+  loadEmptyReadingManifest(readings);
+  readingWorkerContext = new (std::nothrow) pocket::ReadingWorkerContext();
+  if (readingWorkerContext == nullptr) {
+    restoreCachedReadings();
+    syncNotice = SyncNotice::LowMemory;
+    requestUpdate();
+    return false;
+  }
+  readingWorkerContext->operation = operation;
+  readingWorkerContext->credential = credential;
+  readingWorkerContext->item = selected;
+  if (!readingWorkerContext->lifecycle.begin()) {
+    readingWorkerContext->releaseReference();
+    readingWorkerContext = nullptr;
+    restoreCachedReadings();
+    syncNotice = SyncNotice::LowMemory;
+    requestUpdate();
+    return false;
+  }
+  workerRunning = true;
+  workerKind = WorkerKind::Reading;
+  syncNotice = operation == pocket::ReadingWorkerOperation::Manifest ? SyncNotice::Updating : SyncNotice::Downloading;
+  readingWorkerContext->addReference();
+  if (xTaskCreate(readingWorkerTrampoline, "PocketReading", 8192, readingWorkerContext, 1, &workerHandle) == pdPASS) {
+    requestUpdate();
+    return true;
+  }
+  readingWorkerContext->lifecycle.launchFailed();
+  readingWorkerContext->releaseReference();
+  readingWorkerContext->releaseReference();
+  readingWorkerContext = nullptr;
+  workerRunning = false;
+  workerKind = WorkerKind::None;
+  restoreCachedReadings();
+  syncNotice = SyncNotice::LowMemory;
+  LOG_ERR("PKT", "Failed to create reading worker");
+  requestUpdate();
+  return false;
+}
+
 void PocketActivity::processWorkerResult() {
-  if (!workerRunning || workerContext == nullptr || !workerContext->lifecycle.ownerMayFinish()) return;
+  if (!workerRunning || workerKind != WorkerKind::Snapshot || workerContext == nullptr ||
+      !workerContext->lifecycle.ownerMayFinish()) {
+    return;
+  }
 
   const pocket::PocketClientOutcome outcome = workerContext->outcome;
   workerStackMargin = workerContext->stackMargin;
@@ -228,6 +352,7 @@ void PocketActivity::processWorkerResult() {
     workerContext = nullptr;
     workerHandle = nullptr;
     workerRunning = false;
+    workerKind = WorkerKind::None;
     exitAfterCancellation = false;
     onGoHome(HomeMenuItem::POCKET);
     return;
@@ -238,6 +363,7 @@ void PocketActivity::processWorkerResult() {
     workerContext = nullptr;
     workerHandle = nullptr;
     workerRunning = false;
+    workerKind = WorkerKind::None;
     const pocket::CacheOutcome loaded = stored.result == pocket::CacheResult::Success
                                             ? cache.loadBest(snapshot)
                                             : pocket::CacheOutcome{stored.result, stored.slot, stored.generation};
@@ -246,6 +372,7 @@ void PocketActivity::processWorkerResult() {
       todaySelection = 0;
       sectionIndex = 0;
       itemIndex = 0;
+      detailFromToday = false;
       syncNotice = SyncNotice::Updated;
       LOG_INF("PKT",
               "Snapshot sync stored slot=%s generation=%llu items=%u bytes=%u stack_margin=%lu heap=%lu/%lu min=%lu",
@@ -264,6 +391,7 @@ void PocketActivity::processWorkerResult() {
     workerContext = nullptr;
     workerHandle = nullptr;
     workerRunning = false;
+    workerKind = WorkerKind::None;
     restoreCachedSnapshot();
     if (outcome.result == pocket::PocketClientResult::Unauthorized ||
         outcome.result == pocket::PocketClientResult::Revoked) {
@@ -293,9 +421,135 @@ void PocketActivity::processWorkerResult() {
   requestUpdate();
 }
 
+void PocketActivity::processReadingWorkerResult() {
+  if (!workerRunning || workerKind != WorkerKind::Reading || readingWorkerContext == nullptr ||
+      !readingWorkerContext->lifecycle.ownerMayFinish()) {
+    return;
+  }
+  const pocket::PocketClientOutcome outcome = readingWorkerContext->outcome;
+  const pocket::ReadingWorkerOperation operation = readingWorkerContext->operation;
+  const pocket::ReadingDownloadResult downloadResult = readingWorkerContext->downloadResult;
+  workerStackMargin = readingWorkerContext->stackMargin;
+  const uint32_t freeHeapBefore = readingWorkerContext->freeHeapBefore;
+  const uint32_t freeHeapAfter = readingWorkerContext->freeHeapAfter;
+  const uint32_t minimumFreeHeap = readingWorkerContext->minimumFreeHeap;
+
+  if (exitAfterCancellation) {
+    readingWorkerContext->releaseReference();
+    readingWorkerContext = nullptr;
+    workerHandle = nullptr;
+    workerRunning = false;
+    workerKind = WorkerKind::None;
+    exitAfterCancellation = false;
+    onGoHome(HomeMenuItem::POCKET);
+    return;
+  }
+
+  if (operation == pocket::ReadingWorkerOperation::Manifest && outcome.result == pocket::PocketClientResult::Success) {
+    const pocket::CacheOutcome stored =
+        readingCache.store(readingWorkerContext->json, readingWorkerContext->jsonLength);
+    const uint16_t jsonLength = readingWorkerContext->jsonLength;
+    readingWorkerContext->releaseReference();
+    readingWorkerContext = nullptr;
+    workerHandle = nullptr;
+    workerRunning = false;
+    workerKind = WorkerKind::None;
+    const pocket::CacheOutcome loaded = stored.result == pocket::CacheResult::Success
+                                            ? readingCache.loadBest(readings)
+                                            : pocket::CacheOutcome{stored.result, stored.slot, stored.generation};
+    if (stored.result == pocket::CacheResult::Success && loaded.result == pocket::CacheResult::Success) {
+      if (readingIndex >= readings.itemCount) readingIndex = readings.itemCount == 0 ? 0 : readings.itemCount - 1;
+      refreshReadingLocalState();
+      syncNotice = SyncNotice::Updated;
+      LOG_INF("PKT",
+              "Reading manifest stored slot=%s generation=%llu items=%u bytes=%u stack_margin=%lu heap=%lu/%lu "
+              "min=%lu",
+              pocket::cacheSlotName(stored.slot), static_cast<unsigned long long>(stored.generation),
+              static_cast<unsigned>(readings.itemCount), static_cast<unsigned>(jsonLength),
+              static_cast<unsigned long>(workerStackMargin), static_cast<unsigned long>(freeHeapBefore),
+              static_cast<unsigned long>(freeHeapAfter), static_cast<unsigned long>(minimumFreeHeap));
+    } else {
+      restoreCachedReadings();
+      syncNotice = SyncNotice::CacheFailure;
+      LOG_ERR("PKT", "Reading manifest cache failed store=%s load=%s", pocket::cacheResultName(stored.result),
+              pocket::cacheResultName(loaded.result));
+    }
+    requestUpdate();
+    return;
+  }
+
+  if (operation == pocket::ReadingWorkerOperation::Download && outcome.result == pocket::PocketClientResult::Success &&
+      downloadResult == pocket::ReadingDownloadResult::Success) {
+    char downloadedPath[sizeof(readingWorkerContext->downloadedPath)];
+    std::snprintf(downloadedPath, sizeof(downloadedPath), "%s", readingWorkerContext->downloadedPath);
+    readingWorkerContext->releaseReference();
+    readingWorkerContext = nullptr;
+    workerHandle = nullptr;
+    workerRunning = false;
+    workerKind = WorkerKind::None;
+    LOG_INF("PKT", "Reading download verified stack_margin=%lu heap=%lu/%lu min=%lu",
+            static_cast<unsigned long>(workerStackMargin), static_cast<unsigned long>(freeHeapBefore),
+            static_cast<unsigned long>(freeHeapAfter), static_cast<unsigned long>(minimumFreeHeap));
+    activityManager.goToReader(downloadedPath);
+    return;
+  }
+
+  readingWorkerContext->releaseReference();
+  readingWorkerContext = nullptr;
+  workerHandle = nullptr;
+  workerRunning = false;
+  workerKind = WorkerKind::None;
+  restoreCachedReadings();
+  if (outcome.result == pocket::PocketClientResult::Unauthorized ||
+      outcome.result == pocket::PocketClientResult::Revoked) {
+    credentialNeedsAttention = true;
+    syncNotice = SyncNotice::PairingNeedsAttention;
+  } else if (outcome.result == pocket::PocketClientResult::Cancelled) {
+    syncNotice = SyncNotice::None;
+  } else if (operation == pocket::ReadingWorkerOperation::Download &&
+             (downloadResult == pocket::ReadingDownloadResult::HashMismatch ||
+              downloadResult == pocket::ReadingDownloadResult::LengthMismatch)) {
+    syncNotice = SyncNotice::IntegrityFailure;
+  } else if (outcome.transport == pocket::GatewayTransportResult::LowMemory) {
+    syncNotice = SyncNotice::LowMemory;
+  } else if (outcome.transport == pocket::GatewayTransportResult::NoWifi) {
+    syncNotice = SyncNotice::NoWifi;
+  } else if (outcome.transport == pocket::GatewayTransportResult::StorageFailure) {
+    syncNotice = SyncNotice::CacheFailure;
+  } else if (outcome.result == pocket::PocketClientResult::InvalidResponse) {
+    syncNotice = SyncNotice::InvalidData;
+  } else {
+    syncNotice = operation == pocket::ReadingWorkerOperation::Download ? SyncNotice::DownloadFailed
+                                                                       : SyncNotice::ServiceUnavailable;
+  }
+  LOG_ERR("PKT",
+          "Reading operation failed op=%u result=%s transport=%s download=%s http=%d stack_margin=%lu "
+          "heap=%lu/%lu min=%lu",
+          static_cast<unsigned>(operation), pocket::pocketClientResultName(outcome.result),
+          pocket::gatewayTransportResultName(outcome.transport), pocket::readingDownloadResultName(downloadResult),
+          static_cast<int>(outcome.httpStatus), static_cast<unsigned long>(workerStackMargin),
+          static_cast<unsigned long>(freeHeapBefore), static_cast<unsigned long>(freeHeapAfter),
+          static_cast<unsigned long>(minimumFreeHeap));
+  requestUpdate();
+}
+
 void PocketActivity::restoreCachedSnapshot() {
   const pocket::CacheOutcome restored = cache.loadBest(snapshot);
   if (restored.result != pocket::CacheResult::Success) pocket::loadEmptySnapshot(snapshot);
+}
+
+void PocketActivity::restoreCachedReadings() {
+  const pocket::CacheOutcome restored = readingCache.loadBest(readings);
+  if (restored.result != pocket::CacheResult::Success) pocket::loadEmptyReadingManifest(readings);
+  refreshReadingLocalState();
+}
+
+void PocketActivity::refreshReadingLocalState() {
+  std::fill(std::begin(readingLocal), std::end(readingLocal), false);
+  for (size_t index = 0; index < readings.itemCount; ++index) {
+    const auto* item = readings.itemAt(index);
+    readingLocal[index] = item != nullptr && pocket::isReadingDownloaded(*item);
+  }
 }
 
 bool PocketActivity::refreshDue() const {
@@ -307,15 +561,22 @@ bool PocketActivity::refreshDue() const {
 }
 
 void PocketActivity::cancelWorkerAndExit() {
-  if (workerContext == nullptr) return;
+  if (workerContext == nullptr && readingWorkerContext == nullptr) return;
   exitAfterCancellation = true;
-  workerContext->cancelled.store(true, std::memory_order_release);
-  workerContext->lifecycle.requestCancel();
+  if (workerContext != nullptr) {
+    workerContext->cancelled.store(true, std::memory_order_release);
+    workerContext->lifecycle.requestCancel();
+  }
+  if (readingWorkerContext != nullptr) {
+    readingWorkerContext->cancelled.store(true, std::memory_order_release);
+    readingWorkerContext->lifecycle.requestCancel();
+  }
   requestUpdate();
 }
 
 void PocketActivity::loop() {
   processWorkerResult();
+  processReadingWorkerResult();
   if (workerRunning) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) cancelWorkerAndExit();
     return;
@@ -332,19 +593,24 @@ void PocketActivity::loop() {
     return;
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    if (!canSync())
+    if (view == View::ReadingList)
+      openSelectedReading();
+    else if (!canSync())
       openHari();
     else
       openSelection();
     return;
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
-    goToday();
+    if (view == View::Today)
+      openSections();
+    else
+      goToday();
     return;
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
     if (canSync())
-      requestSync();
+      view == View::ReadingList ? requestReadingManifestSync() : requestSync();
     else
       openHari();
     return;
@@ -362,36 +628,175 @@ void PocketActivity::loop() {
   requestUpdate();
 }
 
-const pocket::SnapshotSection* PocketActivity::selectedSection() const {
-  return snapshot.sectionAt(view == View::Today ? todaySelection : sectionIndex);
-}
+const pocket::SnapshotSection* PocketActivity::selectedSection() const { return snapshot.sectionAt(sectionIndex); }
 
 const pocket::SnapshotItem* PocketActivity::selectedItem() const {
   const auto* section = selectedSection();
   return section == nullptr ? nullptr : snapshot.itemAt(*section, itemIndex);
 }
 
+size_t PocketActivity::todayItemCount() const { return static_cast<size_t>(TodaySlot::Count); }
+
+pocket::SnapshotSectionId PocketActivity::todaySectionIdAt(const size_t index) const {
+  switch (static_cast<TodaySlot>(index)) {
+    case TodaySlot::NextMeeting:
+      return pocket::SnapshotSectionId::Agenda;
+    case TodaySlot::TopPriority:
+      return pocket::SnapshotSectionId::Tasks;
+    case TodaySlot::Waiting:
+      return pocket::SnapshotSectionId::Waiting;
+    case TodaySlot::Owe:
+      return pocket::SnapshotSectionId::Owe;
+    case TodaySlot::Count:
+      break;
+  }
+  return pocket::SnapshotSectionId::Agenda;
+}
+
+const pocket::SnapshotSection* PocketActivity::sectionForId(const pocket::SnapshotSectionId id) const {
+  for (size_t index = 0; index < snapshot.sectionCount; ++index) {
+    const auto* section = snapshot.sectionAt(index);
+    if (section != nullptr && section->id == id) return section;
+  }
+  return nullptr;
+}
+
+const pocket::SnapshotItem* PocketActivity::todayItemAt(const size_t index) const {
+  switch (static_cast<TodaySlot>(index)) {
+    case TodaySlot::NextMeeting:
+      return snapshot.nextMeeting();
+    case TodaySlot::TopPriority:
+      return snapshot.priorityAt(0);
+    case TodaySlot::Waiting: {
+      const auto* section = sectionForId(pocket::SnapshotSectionId::Waiting);
+      return section == nullptr ? nullptr : snapshot.itemAt(*section, 0);
+    }
+    case TodaySlot::Owe: {
+      const auto* section = sectionForId(pocket::SnapshotSectionId::Owe);
+      return section == nullptr ? nullptr : snapshot.itemAt(*section, 0);
+    }
+    case TodaySlot::Count:
+      return nullptr;
+  }
+  return nullptr;
+}
+
+const pocket::SnapshotItem* PocketActivity::selectedTodayItem() const { return todayItemAt(todaySelection); }
+
+const char* PocketActivity::todaySlotLabel(const size_t index) const {
+  switch (static_cast<TodaySlot>(index)) {
+    case TodaySlot::NextMeeting:
+      return tr(STR_POCKET_NEXT_MEETING);
+    case TodaySlot::TopPriority:
+      return tr(STR_POCKET_TOP_PRIORITY);
+    case TodaySlot::Waiting:
+      return tr(STR_POCKET_WAITING);
+    case TodaySlot::Owe:
+      return tr(STR_POCKET_OWE);
+    case TodaySlot::Count:
+      return "";
+  }
+  return "";
+}
+
+const char* PocketActivity::todayEmptyLabel(const size_t index) const {
+  switch (static_cast<TodaySlot>(index)) {
+    case TodaySlot::NextMeeting:
+      return tr(STR_POCKET_NO_UPCOMING_MEETING);
+    case TodaySlot::TopPriority:
+      return tr(STR_POCKET_NO_TOP_PRIORITY);
+    case TodaySlot::Waiting:
+      return tr(STR_POCKET_NOTHING_WAITING);
+    case TodaySlot::Owe:
+      return tr(STR_POCKET_NOTHING_OWED);
+    case TodaySlot::Count:
+      return "";
+  }
+  return "";
+}
+
+bool PocketActivity::canOpenTodaySelection() const {
+  return selectedTodayItem() != nullptr || sectionForId(todaySectionIdAt(todaySelection)) != nullptr;
+}
+
+bool PocketActivity::selectSection(const pocket::SnapshotSectionId id) {
+  for (size_t candidate = 0; candidate < snapshot.sectionCount; ++candidate) {
+    const auto* section = snapshot.sectionAt(candidate);
+    if (section == nullptr || section->id != id) continue;
+    sectionIndex = candidate;
+    itemIndex = 0;
+    return true;
+  }
+  return false;
+}
+
+bool PocketActivity::selectItem(const pocket::SnapshotItem* item) {
+  if (item == nullptr) return false;
+  for (size_t candidateSection = 0; candidateSection < snapshot.sectionCount; ++candidateSection) {
+    const auto* section = snapshot.sectionAt(candidateSection);
+    if (section == nullptr) continue;
+    for (size_t candidateItem = 0; candidateItem < section->itemCount; ++candidateItem) {
+      if (snapshot.itemAt(*section, candidateItem) != item) continue;
+      sectionIndex = candidateSection;
+      itemIndex = candidateItem;
+      return true;
+    }
+  }
+  return false;
+}
+
 void PocketActivity::moveSelection(const int delta) {
   if (view == View::Detail) return;
   syncNotice = SyncNotice::None;
-  size_t& selection = view == View::Today ? todaySelection : itemIndex;
-  const auto* section = selectedSection();
-  const size_t count = view == View::Today ? snapshot.sectionCount : section == nullptr ? 0 : section->itemCount;
-  if (delta < 0 && selection > 0)
-    --selection;
-  else if (delta > 0 && selection + 1 < count)
-    ++selection;
+  size_t* selection = nullptr;
+  size_t count = 0;
+  if (view == View::Today) {
+    selection = &todaySelection;
+    count = todayItemCount();
+  } else if (view == View::ReadingList) {
+    selection = &readingIndex;
+    count = readings.itemCount;
+  } else if (view == View::Sections) {
+    selection = &sectionIndex;
+    count = snapshot.sectionCount + 1;
+  } else {
+    selection = &itemIndex;
+    const auto* section = selectedSection();
+    count = section == nullptr ? 0 : section->itemCount;
+  }
+  if (selection == nullptr) return;
+  if (delta < 0 && *selection > 0)
+    --*selection;
+  else if (delta > 0 && *selection + 1 < count)
+    ++*selection;
 }
 
 void PocketActivity::openSelection() {
   syncNotice = SyncNotice::None;
   if (view == View::Today) {
-    const auto* section = selectedSection();
-    if (section == nullptr) return;
-    sectionIndex = todaySelection;
+    const auto* item = selectedTodayItem();
+    if (item != nullptr) {
+      if (!selectItem(item)) return;
+      detailFromToday = true;
+      sectionFromToday = false;
+      view = View::Detail;
+    } else {
+      if (!selectSection(todaySectionIdAt(todaySelection))) return;
+      detailFromToday = false;
+      sectionFromToday = true;
+      view = View::Section;
+    }
+  } else if (view == View::Sections) {
+    if (sectionIndex == snapshot.sectionCount) {
+      openReadings();
+      return;
+    }
+    if (selectedSection() == nullptr) return;
     itemIndex = 0;
+    sectionFromToday = false;
     view = View::Section;
   } else if (view == View::Section && selectedItem() != nullptr) {
+    detailFromToday = false;
     view = View::Detail;
   } else {
     return;
@@ -399,13 +804,52 @@ void PocketActivity::openSelection() {
   requestUpdate();
 }
 
+void PocketActivity::openReadings() {
+  pocket::loadEmptySnapshot(snapshot);
+  restoreCachedReadings();
+  if (readingIndex >= readings.itemCount) readingIndex = 0;
+  view = View::ReadingList;
+  syncNotice = SyncNotice::None;
+  requestUpdate();
+}
+
+bool PocketActivity::selectedReadingDownloaded() const {
+  return readingIndex < readings.itemCount && readingLocal[readingIndex];
+}
+
+void PocketActivity::openSelectedReading() {
+  syncNotice = SyncNotice::None;
+  const auto* item = readings.itemAt(readingIndex);
+  if (item == nullptr) return;
+  if (selectedReadingDownloaded()) {
+    char path[96];
+    if (pocket::readingPath(*item, path, sizeof(path))) activityManager.goToReader(path);
+    return;
+  }
+  if (!canSync()) {
+    openHari();
+    return;
+  }
+  requestReadingDownload();
+}
+
 void PocketActivity::goBack() {
   syncNotice = SyncNotice::None;
-  if (view == View::Detail) {
-    view = View::Section;
+  if (view == View::ReadingList) {
+    pocket::loadEmptyReadingManifest(readings);
+    restoreCachedSnapshot();
+    sectionIndex = snapshot.sectionCount;
+    view = View::Sections;
+    requestUpdate();
+  } else if (view == View::Detail) {
+    view = detailFromToday ? View::Today : View::Section;
+    detailFromToday = false;
     requestUpdate();
   } else if (view == View::Section) {
-    todaySelection = sectionIndex;
+    view = sectionFromToday ? View::Today : View::Sections;
+    sectionFromToday = false;
+    requestUpdate();
+  } else if (view == View::Sections) {
     view = View::Today;
     requestUpdate();
   } else {
@@ -413,10 +857,24 @@ void PocketActivity::goBack() {
   }
 }
 
+void PocketActivity::openSections() {
+  if (view != View::Today) return;
+  view = View::Sections;
+  sectionFromToday = false;
+  syncNotice = SyncNotice::None;
+  requestUpdate();
+}
+
 void PocketActivity::goToday() {
   if (view == View::Today) return;
+  if (view == View::ReadingList) {
+    pocket::loadEmptyReadingManifest(readings);
+    restoreCachedSnapshot();
+  }
   view = View::Today;
-  todaySelection = sectionIndex;
+  if (todaySelection >= todayItemCount()) todaySelection = 0;
+  detailFromToday = false;
+  sectionFromToday = false;
   syncNotice = SyncNotice::None;
   requestUpdate();
 }
@@ -439,10 +897,30 @@ const char* PocketActivity::headerLabel() const {
       return tr(STR_POCKET_SYNC_CACHE_FAILED);
     case SyncNotice::PairingNeedsAttention:
       return tr(STR_POCKET_SYNC_NEEDS_PAIRING);
+    case SyncNotice::Downloading:
+      return tr(STR_POCKET_DOWNLOADING);
+    case SyncNotice::DownloadFailed:
+      return tr(STR_POCKET_DOWNLOAD_FAILED);
+    case SyncNotice::IntegrityFailure:
+      return tr(STR_POCKET_INTEGRITY_FAILED);
     case SyncNotice::None:
       return tr(STR_LAINO_POCKET);
   }
   return tr(STR_LAINO_POCKET);
+}
+
+const char* PocketActivity::sectionLabel(const pocket::SnapshotSection& section) const {
+  switch (section.id) {
+    case pocket::SnapshotSectionId::Agenda:
+      return tr(STR_POCKET_AGENDA);
+    case pocket::SnapshotSectionId::Tasks:
+      return tr(STR_POCKET_TASKS);
+    case pocket::SnapshotSectionId::Waiting:
+      return tr(STR_POCKET_WAITING);
+    case pocket::SnapshotSectionId::Owe:
+      return tr(STR_POCKET_OWE);
+  }
+  return section.label;
 }
 
 void PocketActivity::formatFreshness(char* buffer, const size_t capacity) const {
@@ -471,14 +949,71 @@ void PocketActivity::formatFreshness(char* buffer, const size_t capacity) const 
                   static_cast<unsigned long long>(ageMinutes / 60ULL));
 }
 
+void PocketActivity::formatReadingFreshness(char* buffer, const size_t capacity) const {
+  if (capacity == 0) return;
+  if (readings.generatedAtEpoch == 0) {
+    std::snprintf(buffer, capacity, "%s", tr(STR_POCKET_NOT_SYNCED_HINT));
+    return;
+  }
+  ClockDateTime current;
+  const auto result = halClock.getDateTimeUtc(current);
+  if (result != HalClock::ReadResult::Fresh && result != HalClock::ReadResult::Cached) {
+    std::snprintf(buffer, capacity, tr(STR_POCKET_TIME_UNAVAILABLE_FORMAT), tr(STR_POCKET_SAVED_OFFLINE));
+    return;
+  }
+  const uint64_t now = unixEpoch(current);
+  const uint64_t ageMinutes = now > readings.generatedAtEpoch ? (now - readings.generatedAtEpoch) / 60ULL : 0;
+  const char* state = ageMinutes >= 120 ? tr(STR_POCKET_STALE) : tr(STR_POCKET_UPDATED);
+  if (ageMinutes < 60)
+    std::snprintf(buffer, capacity, tr(STR_POCKET_FRESH_MINUTES_FORMAT), state,
+                  static_cast<unsigned long long>(ageMinutes));
+  else
+    std::snprintf(buffer, capacity, tr(STR_POCKET_FRESH_HOURS_FORMAT), state,
+                  static_cast<unsigned long long>(ageMinutes / 60ULL));
+}
+
 void PocketActivity::renderToday(const Rect& content) {
+  uint32_t totals[pocket::MAX_SNAPSHOT_SECTIONS]{};
+  for (size_t index = 0; index < snapshot.sectionCount; ++index) {
+    const auto* section = snapshot.sectionAt(index);
+    if (section != nullptr) totals[static_cast<size_t>(section->id)] = section->total;
+  }
+  char leftCounts[64];
+  char rightCounts[64];
+  std::snprintf(leftCounts, sizeof(leftCounts), tr(STR_POCKET_TODAY_AGENDA_TASKS_FORMAT),
+                static_cast<unsigned long>(totals[static_cast<size_t>(pocket::SnapshotSectionId::Agenda)]),
+                static_cast<unsigned long>(totals[static_cast<size_t>(pocket::SnapshotSectionId::Tasks)]));
+  std::snprintf(rightCounts, sizeof(rightCounts), tr(STR_POCKET_TODAY_WAITING_OWE_FORMAT),
+                static_cast<unsigned long>(totals[static_cast<size_t>(pocket::SnapshotSectionId::Waiting)]),
+                static_cast<unsigned long>(totals[static_cast<size_t>(pocket::SnapshotSectionId::Owe)]));
+
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int summaryHeight = metrics.tabBarHeight;
+  GUI.drawSubHeader(renderer, Rect{content.x, content.y, content.width, summaryHeight}, leftCounts, rightCounts);
+  const Rect list{content.x, content.y + summaryHeight, content.width, std::max(0, content.height - summaryHeight)};
+  const size_t count = todayItemCount();
+
   GUI.drawList(
-      renderer, content, snapshot.sectionCount, static_cast<int>(todaySelection),
+      renderer, list, count, static_cast<int>(todaySelection),
+      [this](const int index) -> std::string { return todaySlotLabel(static_cast<size_t>(index)); },
       [this](const int index) -> std::string {
+        const auto* item = todayItemAt(static_cast<size_t>(index));
+        return item == nullptr ? todayEmptyLabel(static_cast<size_t>(index)) : item->title;
+      });
+}
+
+void PocketActivity::renderSections(const Rect& content) {
+  GUI.drawList(
+      renderer, content, snapshot.sectionCount + 1, static_cast<int>(sectionIndex),
+      [this](const int index) -> std::string {
+        if (static_cast<size_t>(index) == snapshot.sectionCount) return tr(STR_POCKET_READING);
         const auto* section = snapshot.sectionAt(index);
-        return section == nullptr ? "" : section->label;
+        return section == nullptr ? "" : sectionLabel(*section);
       },
       [this](const int index) -> std::string {
+        if (static_cast<size_t>(index) == snapshot.sectionCount) {
+          return tr(STR_POCKET_AVAILABLE);
+        }
         const auto* section = snapshot.sectionAt(index);
         const auto* first = section == nullptr ? nullptr : snapshot.itemAt(*section, 0);
         return first == nullptr ? tr(STR_POCKET_NOTHING_OPEN) : first->title;
@@ -527,6 +1062,29 @@ void PocketActivity::renderDetail(const Rect& content) {
   }
 }
 
+void PocketActivity::renderReadings(const Rect& content) {
+  if (readings.itemCount == 0) {
+    const int center = content.y + content.height / 2;
+    UITheme::drawCenteredText(renderer, content, UI_12_FONT_ID, center - renderer.getLineHeight(UI_12_FONT_ID),
+                              tr(STR_POCKET_NO_READINGS), true);
+    UITheme::drawCenteredText(renderer, content, UI_10_FONT_ID, center + renderer.getLineHeight(UI_10_FONT_ID),
+                              tr(STR_POCKET_NO_READINGS_HINT), true);
+    return;
+  }
+  GUI.drawList(
+      renderer, content, readings.itemCount, static_cast<int>(readingIndex),
+      [this](const int index) -> std::string {
+        const auto* item = readings.itemAt(index);
+        return item == nullptr ? "" : item->title;
+      },
+      [this](const int index) -> std::string {
+        const auto* item = readings.itemAt(index);
+        if (item == nullptr) return "";
+        const char* state = readingLocal[index] ? tr(STR_POCKET_ON_DEVICE) : tr(STR_POCKET_AVAILABLE);
+        return item->byline[0] == '\0' ? state : std::string(item->byline) + " · " + state;
+      });
+}
+
 void PocketActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
@@ -549,43 +1107,76 @@ void PocketActivity::render(RenderLock&&) {
   const int headerY = std::max(safeTop, metrics.topPadding);
   const int headerWidth = std::max(0, safeRight - safeLeft);
   char freshness[80];
-  formatFreshness(freshness, sizeof(freshness));
+  if (view == View::ReadingList)
+    formatReadingFreshness(freshness, sizeof(freshness));
+  else
+    formatFreshness(freshness, sizeof(freshness));
   const char* title = headerLabel();
-  if (syncNotice == SyncNotice::None && view != View::Today) {
-    const auto* section = selectedSection();
-    if (section != nullptr) title = section->label;
+  if (syncNotice == SyncNotice::None) {
+    if (view == View::Today)
+      title = tr(STR_POCKET_TODAY);
+    else if (view == View::Sections)
+      title = tr(STR_POCKET_LISTS);
+    else if (view == View::ReadingList)
+      title = tr(STR_POCKET_READING);
+    else {
+      const auto* section = selectedSection();
+      if (section != nullptr) title = sectionLabel(*section);
+    }
   }
   if (headerWidth > 0 && metrics.headerHeight > 0) {
     GUI.drawHeader(renderer, Rect{safeLeft, headerY, headerWidth, metrics.headerHeight}, title,
-                   view == View::Today ? freshness : nullptr);
+                   view == View::Today || view == View::ReadingList ? freshness : nullptr);
   }
 
   const int sideInset = std::max(metrics.contentSidePadding, metrics.sideButtonHintsWidth + metrics.verticalSpacing);
   const int contentY = headerY + metrics.headerHeight + metrics.verticalSpacing;
   const Rect content{safeLeft + sideInset, contentY, std::max(0, safeRight - safeLeft - sideInset * 2),
                      std::max(0, safeBottom - contentY - metrics.verticalSpacing)};
-  if (syncNotice == SyncNotice::Updating) {
-    UITheme::drawCenteredText(renderer, content, UI_10_FONT_ID, content.y + content.height / 2, tr(STR_POCKET_SYNCING),
-                              true);
+  if (syncNotice == SyncNotice::Updating || syncNotice == SyncNotice::Downloading) {
+    UITheme::drawCenteredText(
+        renderer, content, UI_10_FONT_ID, content.y + content.height / 2,
+        syncNotice == SyncNotice::Downloading ? tr(STR_POCKET_DOWNLOADING) : tr(STR_POCKET_SYNCING), true);
   } else if (view == View::Today)
     renderToday(content);
+  else if (view == View::Sections)
+    renderSections(content);
+  else if (view == View::ReadingList)
+    renderReadings(content);
   else if (view == View::Section)
     renderSection(content);
   else
     renderDetail(content);
 
   const auto* section = selectedSection();
-  const size_t selection = view == View::Today ? todaySelection : itemIndex;
-  const size_t selectionCount = view == View::Today  ? snapshot.sectionCount
-                                : section == nullptr ? 0
-                                                     : section->itemCount;
-  const bool canOpen =
-      view == View::Today ? selectedSection() != nullptr : view == View::Section && selectedItem() != nullptr;
+  const size_t selection = view == View::Today         ? todaySelection
+                           : view == View::Sections    ? sectionIndex
+                           : view == View::ReadingList ? readingIndex
+                                                       : itemIndex;
+  const size_t selectionCount = view == View::Today         ? todayItemCount()
+                                : view == View::Sections    ? snapshot.sectionCount + 1
+                                : view == View::ReadingList ? readings.itemCount
+                                : section == nullptr        ? 0
+                                                            : section->itemCount;
+  const bool canOpen = view == View::Today         ? canOpenTodaySelection()
+                       : view == View::Sections    ? sectionIndex <= snapshot.sectionCount
+                       : view == View::ReadingList ? readings.itemAt(readingIndex) != nullptr
+                       : view == View::Section     ? selectedItem() != nullptr
+                                                   : false;
   const char* previousLabel = !workerRunning && view != View::Detail && selection > 0 ? tr(STR_POCKET_PREVIOUS) : "";
   const char* nextLabel =
       !workerRunning && view != View::Detail && selection + 1 < selectionCount ? tr(STR_POCKET_NEXT) : "";
-  const char* confirmLabel = workerRunning ? "" : !canSync() ? tr(STR_POCKET_HARI) : canOpen ? tr(STR_OPEN) : "";
-  const char* todayLabel = !workerRunning && view != View::Today ? tr(STR_POCKET_TODAY) : "";
+  const char* confirmLabel = "";
+  if (!workerRunning) {
+    if (view == View::ReadingList && canOpen) {
+      confirmLabel = selectedReadingDownloaded() ? tr(STR_OPEN)
+                     : canSync()                 ? tr(STR_POCKET_DOWNLOAD)
+                                                 : tr(STR_POCKET_HARI);
+    } else {
+      confirmLabel = !canSync() ? tr(STR_POCKET_HARI) : canOpen ? tr(STR_OPEN) : "";
+    }
+  }
+  const char* todayLabel = workerRunning ? "" : view == View::Today ? tr(STR_POCKET_LISTS) : tr(STR_POCKET_TODAY);
   const char* syncLabel = workerRunning ? "" : canSync() ? tr(STR_POCKET_SYNC) : tr(STR_POCKET_HARI);
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, todayLabel, syncLabel);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);

@@ -6,6 +6,8 @@ add_executable(PocketPairingTest
   ${REPO_ROOT}/src/activities/pocket/PocketCredentialStorage.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketPairingClient.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketPairingProtocol.cpp
+  ${REPO_ROOT}/src/activities/pocket/PocketReading.cpp
+  ${REPO_ROOT}/src/activities/pocket/PocketReadingParser.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketSnapshot.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketSnapshotParser.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketPairingWorker.cpp
@@ -52,6 +54,8 @@ add_executable(PocketPairingPreflight
   ${REPO_ROOT}/src/activities/pocket/PocketCredential.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketPairingClient.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketPairingProtocol.cpp
+  ${REPO_ROOT}/src/activities/pocket/PocketReading.cpp
+  ${REPO_ROOT}/src/activities/pocket/PocketReadingParser.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketSnapshot.cpp
   ${REPO_ROOT}/src/activities/pocket/PocketSnapshotParser.cpp
 )

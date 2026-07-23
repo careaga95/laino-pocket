@@ -12,7 +12,7 @@
 namespace {
 
 constexpr char VALID[] =
-    R"({"protocolVersion":2,"snapshotId":"snapshot-1","generatedAtEpoch":1774252800,"refreshAfterEpoch":1774260000,"sourceStatus":{"calendar":"fresh","tasks":"partial","commitments":"fresh"},"today":{"nextMeeting":null,"priorities":[],"counts":{"agenda":1,"tasks":1,"waiting":306,"owe":404}},"sections":[{"id":"agenda","label":"Agenda","total":1,"items":[{"id":"event-opaque","title":"Product review","subtitle":"10:00 AM–10:30 AM","detail":["Room 2","Alice","Organizer: Bob"]}]},{"id":"tasks","label":"Tasks","total":1,"items":[{"id":"task-opaque","title":"Send brief","subtitle":"Due Jul 20 · Work","detail":[]}]},{"id":"waiting","label":"Waiting On","total":306,"items":[]},{"id":"owe","label":"You Owe","total":404,"items":[]}]})";
+    R"({"protocolVersion":2,"snapshotId":"snapshot-1","generatedAtEpoch":1774252800,"refreshAfterEpoch":1774260000,"sourceStatus":{"calendar":"fresh","tasks":"partial","commitments":"fresh"},"today":{"nextMeeting":{"id":"event-opaque","title":"Product review","subtitle":"10:00 AM–10:30 AM","detail":["Room 2","Alice","Organizer: Bob"]},"priorities":[{"id":"task-opaque","title":"Send brief","subtitle":"Due Jul 20 · Work","detail":[]}],"counts":{"agenda":1,"tasks":1,"waiting":306,"owe":404}},"sections":[{"id":"agenda","label":"Agenda","total":1,"items":[{"id":"event-opaque","title":"Product review","subtitle":"10:00 AM–10:30 AM","detail":["Room 2","Alice","Organizer: Bob"]}]},{"id":"tasks","label":"Tasks","total":1,"items":[{"id":"task-opaque","title":"Send brief","subtitle":"Due Jul 20 · Work","detail":[]}]},{"id":"waiting","label":"Waiting On","total":306,"items":[]},{"id":"owe","label":"You Owe","total":404,"items":[]}]})";
 
 class MemoryStorage final : public pocket::PocketCacheStorage {
  public:
@@ -54,7 +54,31 @@ TEST(PocketSnapshotParser, ParsesBoundedHierarchyAndSourceState) {
   EXPECT_EQ(item->detailCount, 3);
   EXPECT_EQ(snapshot.sectionAt(2)->total, 306U);
   EXPECT_EQ(snapshot.sectionAt(3)->total, 404U);
+  ASSERT_NE(snapshot.nextMeeting(), nullptr);
+  EXPECT_STREQ(snapshot.nextMeeting()->id, "event-opaque");
+  ASSERT_EQ(snapshot.priorityCount, 1);
+  ASSERT_NE(snapshot.priorityAt(0), nullptr);
+  EXPECT_STREQ(snapshot.priorityAt(0)->id, "task-opaque");
   EXPECT_LT(sizeof(snapshot), 256U);
+}
+
+TEST(PocketSnapshotParser, RejectsTodayReferencesOrCountsThatDoNotMatchSections) {
+  pocket::PocketSnapshot snapshot;
+  ASSERT_EQ(pocket::parsePocketSnapshot(VALID, std::strlen(VALID), snapshot), pocket::SnapshotParseResult::Success);
+
+  std::string missingPriority = VALID;
+  missingPriority.replace(missingPriority.find("\"task-opaque\""), std::strlen("\"task-opaque\""), "\"missing-task\"");
+  EXPECT_EQ(pocket::parsePocketSnapshot(missingPriority.data(), missingPriority.size(), snapshot),
+            pocket::SnapshotParseResult::InvalidValue);
+  EXPECT_STREQ(snapshot.priorityAt(0)->id, "task-opaque");
+
+  std::string wrongCount = VALID;
+  const auto count = wrongCount.find("\"waiting\":306");
+  ASSERT_NE(count, std::string::npos);
+  wrongCount.replace(count, std::strlen("\"waiting\":306"), "\"waiting\":305");
+  EXPECT_EQ(pocket::parsePocketSnapshot(wrongCount.data(), wrongCount.size(), snapshot),
+            pocket::SnapshotParseResult::InvalidValue);
+  EXPECT_EQ(snapshot.sectionAt(2)->total, 306U);
 }
 
 TEST(PocketSnapshotParser, RejectsUnsupportedProtocolAndLeavesDestinationUnchanged) {
@@ -87,7 +111,7 @@ TEST(PocketSnapshotParser, RejectsOversizedSection) {
     items += R"({"id":"x","title":"T","subtitle":"S","detail":[]})";
   }
   const std::string json =
-      R"({"protocolVersion":2,"snapshotId":"s","generatedAtEpoch":1,"refreshAfterEpoch":2,"sourceStatus":{"calendar":"fresh","tasks":"fresh","commitments":"fresh"},"sections":[{"id":"agenda","label":"Agenda","total":13,"items":[)" +
+      R"({"protocolVersion":2,"snapshotId":"s","generatedAtEpoch":1,"refreshAfterEpoch":2,"sourceStatus":{"calendar":"fresh","tasks":"fresh","commitments":"fresh"},"today":{"nextMeeting":null,"priorities":[],"counts":{"agenda":13,"tasks":0,"waiting":0,"owe":0}},"sections":[{"id":"agenda","label":"Agenda","total":13,"items":[)" +
       items + "]}]}";
   pocket::PocketSnapshot snapshot;
   EXPECT_EQ(pocket::parsePocketSnapshot(json.data(), json.size(), snapshot), pocket::SnapshotParseResult::TooManyItems);

@@ -26,4 +26,24 @@ GatewayTransportResult validateResponseEnvelope(const ResponseEnvelope& envelope
   return GatewayTransportResult::Success;
 }
 
+GatewayTransportResult validateBinaryResponseEnvelope(const ResponseEnvelope& envelope,
+                                                      const uint32_t maximumBodyBytes) {
+  if (envelope.status >= 300 && envelope.status <= 399) return GatewayTransportResult::RedirectRejected;
+  if (envelope.status < 200 || envelope.status > 299) {
+    return validateResponseEnvelope(envelope);
+  }
+  if (envelope.status != 200 || envelope.hasTransferEncoding || !envelope.hasContentLength ||
+      envelope.contentLength <= 0) {
+    return GatewayTransportResult::MalformedHttp;
+  }
+  if (maximumBodyBytes == 0 || maximumBodyBytes > POCKET_MAX_BINARY_RESPONSE_BODY_BYTES ||
+      envelope.contentLength > static_cast<int32_t>(maximumBodyBytes)) {
+    return GatewayTransportResult::OversizedResponse;
+  }
+  if (!envelope.hasContentType || !envelope.epubContentType) {
+    return GatewayTransportResult::UnsupportedContentType;
+  }
+  return GatewayTransportResult::Success;
+}
+
 }  // namespace pocket

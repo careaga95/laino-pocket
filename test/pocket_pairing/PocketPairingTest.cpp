@@ -12,8 +12,9 @@
 #include "PocketCredentialStore.h"
 #include "PocketPairingClient.h"
 #include "PocketPairingProtocol.h"
-#include "PocketPairingWorker.h"
 #include "PocketPairingTransportPolicy.h"
+#include "PocketPairingWorker.h"
+#include "PocketReadingParser.h"
 
 namespace {
 
@@ -44,6 +45,10 @@ class FakeGateway final : public pocket::PocketGatewayTransport {
   std::string bearer;
   std::string successJson;
   std::size_t successCapacity = 0;
+  pocket::GatewayBodySink* successSink = nullptr;
+  uint32_t successSinkMaximumBytes = 0;
+  pocket::GatewaySuccessMediaType successMediaType = pocket::GatewaySuccessMediaType::Json;
+  uint32_t timeoutMs = 0;
   int calls = 0;
 
   void request(const pocket::GatewayRequest& request, const std::atomic<bool>&,
@@ -54,6 +59,10 @@ class FakeGateway final : public pocket::PocketGatewayTransport {
     body.assign(request.jsonBody == nullptr ? "" : request.jsonBody, request.jsonBodyLength);
     bearer = request.bearer == nullptr ? "" : request.bearer;
     successCapacity = request.successBodyCapacity;
+    successSink = request.successSink;
+    successSinkMaximumBytes = request.successSinkMaximumBytes;
+    successMediaType = request.successMediaType;
+    timeoutMs = request.timeoutMs;
     response = next;
     if (response.httpStatus >= 200 && response.httpStatus <= 299 && request.successBody != nullptr) {
       if (successJson.size() + 1 > request.successBodyCapacity) {
@@ -79,6 +88,14 @@ class FakeGateway final : public pocket::PocketGatewayTransport {
       next.body[value.size()] = '\0';
     }
   }
+};
+
+class NullSink final : public pocket::GatewayBodySink {
+ public:
+  bool begin(uint32_t) override { return true; }
+  bool write(const uint8_t*, size_t) override { return true; }
+  bool finish() override { return true; }
+  void abort() override {}
 };
 
 class FakeCredentialStorage final : public pocket::CredentialBlobStorage {
@@ -281,14 +298,14 @@ TEST(PocketPairingParserTest, SensitiveStartScratchNeverPublishesPartialOrInvali
   pocket::PairingStartResponse destination{};
   std::memset(&destination, 0x5a, sizeof(destination));
   const pocket::PairingStartResponse original = destination;
-  const std::string partial = std::string("{\"protocol\":1,\"device_code\":\"") + DEVICE_CODE +
-                              "\",\"user_code\":\"ABCD";
+  const std::string partial =
+      std::string("{\"protocol\":1,\"device_code\":\"") + DEVICE_CODE + "\",\"user_code\":\"ABCD";
   EXPECT_EQ(pocket::parsePairingStartResponse(partial.data(), partial.size(), destination),
             pocket::JsonParseResult::InvalidSchema);
   EXPECT_EQ(std::memcmp(&destination, &original, sizeof(destination)), 0);
 
-  const std::string duplicate = std::string("{\"protocol\":1,\"device_code\":\"") + DEVICE_CODE +
-                                "\",\"device_code\":\"" + DEVICE_CODE + "\"}";
+  const std::string duplicate =
+      std::string("{\"protocol\":1,\"device_code\":\"") + DEVICE_CODE + "\",\"device_code\":\"" + DEVICE_CODE + "\"}";
   EXPECT_EQ(pocket::parsePairingStartResponse(duplicate.data(), duplicate.size(), destination),
             pocket::JsonParseResult::InvalidSchema);
   EXPECT_EQ(std::memcmp(&destination, &original, sizeof(destination)), 0);
@@ -355,8 +372,9 @@ TEST(PocketPairingParserTest, SensitiveFinalizeScratchNeverPublishesPartialBeare
             pocket::JsonParseResult::InvalidSchema);
   EXPECT_EQ(std::memcmp(&destination, &original, sizeof(destination)), 0);
 
-  const std::string wrongType = std::string("{\"protocol\":1,\"access_token\":7,\"token_type\":\"Bearer\","
-                                            "\"device_id\":\"") +
+  const std::string wrongType = std::string(
+                                    "{\"protocol\":1,\"access_token\":7,\"token_type\":\"Bearer\","
+                                    "\"device_id\":\"") +
                                 UUID + "\",\"scope\":\"pocket.device.read\"}";
   EXPECT_EQ(pocket::parsePairingFinalizeResponse(wrongType.data(), wrongType.size(), destination),
             pocket::JsonParseResult::InvalidSchema);
@@ -591,8 +609,8 @@ TEST(PocketPairingClientTest, DeviceCodeAndBearerNeverAppearInUrls) {
 
 TEST(PocketBundleClientTest, UsesExactAuthenticatedPathAndAcceptsNormativeBundle) {
   FakeGateway gateway;
-  gateway.json(200,
-               R"({"protocolVersion":1,"cards":[{"label":"Laino","title":"Today","subtitle":"Ready","lines":["One"]}]})");
+  gateway.json(
+      200, R"({"protocolVersion":1,"cards":[{"label":"Laino","title":"Today","subtitle":"Ready","lines":["One"]}]})");
   pocket::PairingClient client(gateway);
   std::atomic<bool> cancelled{false};
   char json[pocket::MAX_JSON_DOCUMENT_BYTES + 1]{};
@@ -612,8 +630,8 @@ TEST(PocketBundleClientTest, UsesExactAuthenticatedPathAndAcceptsNormativeBundle
 TEST(PocketBundleClientTest, RejectsMoreThanFourCardsAndInvalidOutputCapacity) {
   FakeGateway gateway;
   const std::string card = R"({"label":"L","title":"T","subtitle":"S","lines":[]})";
-  gateway.json(200, std::string("{\"protocolVersion\":1,\"cards\":[") + card + "," + card + "," + card +
-                        "," + card + "," + card + "]}");
+  gateway.json(200, std::string("{\"protocolVersion\":1,\"cards\":[") + card + "," + card + "," + card + "," + card +
+                        "," + card + "]}");
   pocket::PairingClient client(gateway);
   std::atomic<bool> cancelled{false};
   char json[pocket::MAX_JSON_DOCUMENT_BYTES + 1]{};
@@ -637,6 +655,37 @@ TEST(PocketBundleClientTest, PreservesNormativeRevocationClassification) {
   EXPECT_EQ(client.bundle(TOKEN, cancelled, json, sizeof(json), jsonLength).result,
             pocket::PocketClientResult::Revoked);
   EXPECT_EQ(jsonLength, 0U);
+}
+
+TEST(PocketReadingClientTest, UsesExactManifestAndImmutableContentPaths) {
+  FakeGateway gateway;
+  gateway.json(200, std::string("{\"protocolVersion\":1,\"generatedAtEpoch\":1776956500,\"items\":[{") +
+                        "\"id\":\"00112233-4455-4677-8899-aabbccddeeff\",\"title\":\"Article\","
+                        "\"queuedAtEpoch\":1776956400,\"bytes\":1234,"
+                        "\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\","
+                        "\"format\":\"epub\"}]}");
+  pocket::PairingClient client(gateway);
+  std::atomic<bool> cancelled{false};
+  char json[pocket::MAX_READING_MANIFEST_JSON_BYTES + 1]{};
+  size_t jsonLength = 0;
+  EXPECT_EQ(client.readingManifest(TOKEN, cancelled, json, sizeof(json), jsonLength).result,
+            pocket::PocketClientResult::Success);
+  EXPECT_EQ(gateway.path, "/api/device/pocket/v1/reading");
+  EXPECT_EQ(gateway.successCapacity, sizeof(json));
+
+  pocket::ReadingManifest manifest;
+  ASSERT_EQ(pocket::parseReadingManifest(json, jsonLength, manifest), pocket::ReadingParseResult::Success);
+  NullSink sink;
+  gateway.json(200, "");
+  EXPECT_EQ(client.readingContent(TOKEN, *manifest.itemAt(0), sink, cancelled).result,
+            pocket::PocketClientResult::Success);
+  EXPECT_EQ(gateway.path, "/api/device/pocket/v1/reading/00112233-4455-4677-8899-aabbccddeeff/content");
+  EXPECT_EQ(gateway.successSink, &sink);
+  EXPECT_EQ(gateway.successSinkMaximumBytes, 1234U);
+  EXPECT_EQ(gateway.successMediaType, pocket::GatewaySuccessMediaType::Epub);
+  EXPECT_EQ(gateway.timeoutMs, pocket::POCKET_MAX_REQUEST_TIMEOUT_MS);
+  EXPECT_EQ(gateway.path.find(TOKEN), std::string::npos);
+  EXPECT_EQ(gateway.bearer, TOKEN);
 }
 
 TEST(PocketPairingClientTest, ClassifiesRateLimitConsumedRevokedAndMalformedErrors) {
@@ -713,8 +762,7 @@ TEST(PocketPairingClientTest, AcceptsOnlyExactStatusAndNormativeErrorCodePairs) 
   std::atomic<bool> cancelled{false};
   for (const Case& item : CASES) {
     gateway.json(item.status, std::string("{\"error\":\"") + item.error + "\"}", item.retryAfter);
-    EXPECT_EQ(client.poll(DEVICE_CODE, cancelled, response).result, item.expected)
-        << item.status << " " << item.error;
+    EXPECT_EQ(client.poll(DEVICE_CODE, cancelled, response).result, item.expected) << item.status << " " << item.error;
   }
 
   gateway.json(500, "{\"error\":\"device_revoked\"}");
@@ -787,7 +835,7 @@ TEST(PocketPairingWorkerTest, UnpairOnlyTreatsThreeDefinedOutcomesAsRemoteResolu
 TEST(PocketPairingWorkerTest, WorkerContextOutlivesOwnerUntilOrderedTeardown) {
   auto* context = new pocket::PairingWorkerContext();
   ASSERT_TRUE(context->lifecycle.begin());
-  context->addReference();  // The real task acquires this before xTaskCreate.
+  context->addReference();      // The real task acquires this before xTaskCreate.
   context->releaseReference();  // Simulate an externally destroyed Activity owner.
   context->cancelled.store(true, std::memory_order_release);
   context->lifecycle.requestCancel();
@@ -815,8 +863,7 @@ TEST(PocketPairingTransportPolicyTest, CancellationAndTotalDeadlineUseProduction
       pocket::TransportCheckpoint::BeforeRequest, pocket::TransportCheckpoint::DnsWait,
       pocket::TransportCheckpoint::ResponseRead, pocket::TransportCheckpoint::BetweenPolls};
   for (const auto checkpoint : CHECKPOINTS) {
-    EXPECT_EQ(pocket::checkTransportControl(checkpoint, true, 0),
-              pocket::TransportControlDecision::Cancelled);
+    EXPECT_EQ(pocket::checkTransportControl(checkpoint, true, 0), pocket::TransportControlDecision::Cancelled);
   }
   EXPECT_EQ(pocket::checkTransportControl(pocket::TransportCheckpoint::ResponseRead, false, 12999),
             pocket::TransportControlDecision::Continue);
@@ -841,8 +888,8 @@ TEST(PocketPairingTransportPolicyTest, RejectsRedirectAmbiguousFramingOversizeAn
 }
 
 TEST(PocketPairingTransportPolicyTest, LargeSuccessBodyIsExplicitlyBoundedToSnapshotContract) {
-  const pocket::ResponseEnvelope exact{
-      200, true, false, true, true, static_cast<int32_t>(pocket::POCKET_MAX_LARGE_RESPONSE_BODY_BYTES)};
+  const pocket::ResponseEnvelope exact{200,  true, false,
+                                       true, true, static_cast<int32_t>(pocket::POCKET_MAX_LARGE_RESPONSE_BODY_BYTES)};
   const pocket::ResponseEnvelope oversized{
       200, true, false, true, true, static_cast<int32_t>(pocket::POCKET_MAX_LARGE_RESPONSE_BODY_BYTES + 1)};
   EXPECT_EQ(pocket::validateResponseEnvelope(exact, pocket::POCKET_MAX_LARGE_RESPONSE_BODY_BYTES),
@@ -851,6 +898,26 @@ TEST(PocketPairingTransportPolicyTest, LargeSuccessBodyIsExplicitlyBoundedToSnap
             pocket::GatewayTransportResult::OversizedResponse);
   EXPECT_EQ(pocket::validateResponseEnvelope(exact, pocket::POCKET_MAX_LARGE_RESPONSE_BODY_BYTES + 1),
             pocket::GatewayTransportResult::OversizedResponse);
+}
+
+TEST(PocketPairingTransportPolicyTest, EpubRequiresExactBoundedLengthTypeAndUnambiguousFraming) {
+  const pocket::ResponseEnvelope exact{200, true, false, true, false, 1234, true};
+  EXPECT_EQ(pocket::validateBinaryResponseEnvelope(exact, 1234), pocket::GatewayTransportResult::Success);
+
+  auto invalid = exact;
+  invalid.hasContentLength = false;
+  EXPECT_EQ(pocket::validateBinaryResponseEnvelope(invalid, 1234), pocket::GatewayTransportResult::MalformedHttp);
+  invalid = exact;
+  invalid.hasTransferEncoding = true;
+  EXPECT_EQ(pocket::validateBinaryResponseEnvelope(invalid, 1234), pocket::GatewayTransportResult::MalformedHttp);
+  invalid = exact;
+  invalid.epubContentType = false;
+  invalid.jsonContentType = true;
+  EXPECT_EQ(pocket::validateBinaryResponseEnvelope(invalid, 1234),
+            pocket::GatewayTransportResult::UnsupportedContentType);
+  invalid = exact;
+  invalid.contentLength = 1235;
+  EXPECT_EQ(pocket::validateBinaryResponseEnvelope(invalid, 1234), pocket::GatewayTransportResult::OversizedResponse);
 }
 
 TEST(PocketPairingTransportPolicyTest, AllowsBoundedCloudflareResponseMetadataLines) {
@@ -904,6 +971,17 @@ TEST(PocketInteractionTest, SyncIsAVisibleFrontButtonAndSideButtonsOwnListNaviga
   EXPECT_NE(source.find("const char* syncLabel"), std::string::npos);
   EXPECT_NE(source.find("tr(STR_POCKET_SYNC)"), std::string::npos);
   EXPECT_NE(source.find("GUI.drawSideButtonHints"), std::string::npos);
+  EXPECT_NE(source.find("snapshot.nextMeeting()"), std::string::npos);
+  EXPECT_NE(source.find("snapshot.priorityAt(0)"), std::string::npos);
+  EXPECT_NE(source.find("SnapshotSectionId::Waiting"), std::string::npos);
+  EXPECT_NE(source.find("SnapshotSectionId::Owe"), std::string::npos);
+  EXPECT_NE(source.find("tr(STR_POCKET_TOP_PRIORITY)"), std::string::npos);
+  EXPECT_NE(source.find("tr(STR_POCKET_NO_UPCOMING_MEETING)"), std::string::npos);
+  EXPECT_NE(source.find("tr(STR_POCKET_NOTHING_WAITING)"), std::string::npos);
+  EXPECT_NE(source.find("tr(STR_POCKET_NOTHING_OWED)"), std::string::npos);
+  EXPECT_NE(source.find("sectionFromToday"), std::string::npos);
+  EXPECT_NE(source.find("View::Sections"), std::string::npos);
+  EXPECT_NE(source.find("tr(STR_POCKET_LISTS)"), std::string::npos);
 }
 
 TEST(PocketPairingRenderingTest, UnpairWarningIsWrappedInsideTheDisplayInsteadOfDrawnAsOneLine) {
@@ -936,7 +1014,6 @@ TEST(PocketPairingInteractionTest, UnpairConfirmationConnectsBeforeRemoteDelete)
   ASSERT_NE(stateEnd, std::string::npos);
   const std::string confirmCase = source.substr(state, stateEnd - state);
 
-  EXPECT_NE(confirmCase.find("requestOperationWithWifi(pocket::WorkerOperation::DeleteSelf)"),
-            std::string::npos);
+  EXPECT_NE(confirmCase.find("requestOperationWithWifi(pocket::WorkerOperation::DeleteSelf)"), std::string::npos);
   EXPECT_EQ(confirmCase.find("credentialStore.clear()"), std::string::npos);
 }

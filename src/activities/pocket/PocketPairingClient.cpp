@@ -7,6 +7,7 @@
 
 #include "PocketCardParser.h"
 #include "PocketCredential.h"
+#include "PocketReadingParser.h"
 #include "PocketSnapshotParser.h"
 
 namespace pocket {
@@ -18,6 +19,8 @@ constexpr char FINALIZE_PATH[] = "/api/device/pocket/v1/pairing/finalize";
 constexpr char SELF_PATH[] = "/api/device/pocket/v1/self";
 constexpr char BUNDLE_PATH[] = "/api/device/pocket/v1/bundle";
 constexpr char SNAPSHOT_PATH[] = "/api/device/pocket/v1/snapshot";
+constexpr char READING_PATH[] = "/api/device/pocket/v1/reading";
+constexpr uint32_t READING_DOWNLOAD_TIMEOUT_MS = 120000;
 
 PocketClientOutcome baseOutcome(const GatewayResponse& response) {
   PocketClientOutcome outcome{};
@@ -282,6 +285,57 @@ PocketClientOutcome PairingClient::snapshot(const char* bearer, const std::atomi
   return outcome;
 }
 
+PocketClientOutcome PairingClient::readingManifest(const char* bearer, const std::atomic<bool>& cancelled, char* json,
+                                                   const std::size_t jsonCapacity, std::size_t& jsonLength) {
+  jsonLength = 0;
+  if (!isBase64Url256(bearer, bearer == nullptr ? 0 : std::strlen(bearer)) || json == nullptr ||
+      jsonCapacity != MAX_READING_MANIFEST_JSON_BYTES + 1) {
+    return {PocketClientResult::InvalidResponse};
+  }
+  json[0] = '\0';
+  GatewayResponse gateway{};
+  GatewayRequest request{GatewayMethod::Get, READING_PATH, nullptr, 0, bearer, json, jsonCapacity};
+  PocketClientOutcome outcome = execute(request, cancelled, gateway);
+  if (outcome.result == PocketClientResult::Success) {
+    if (gateway.httpStatus != 200 || validateReadingManifest(json, gateway.bodyLength) != ReadingParseResult::Success) {
+      outcome.result = PocketClientResult::InvalidResponse;
+    } else {
+      jsonLength = gateway.bodyLength;
+    }
+  }
+  secureClear(&gateway, sizeof(gateway));
+  return outcome;
+}
+
+PocketClientOutcome PairingClient::readingContent(const char* bearer, const ReadingItem& item, GatewayBodySink& sink,
+                                                  const std::atomic<bool>& cancelled) {
+  if (!isBase64Url256(bearer, bearer == nullptr ? 0 : std::strlen(bearer)) || !isReadingUuid(item.id) ||
+      item.bytes == 0 || item.bytes > MAX_READING_EPUB_BYTES) {
+    return {PocketClientResult::InvalidResponse};
+  }
+  char path[128];
+  const int pathLength = std::snprintf(path, sizeof(path), "/api/device/pocket/v1/reading/%s/content", item.id);
+  if (pathLength <= 0 || static_cast<size_t>(pathLength) >= sizeof(path)) {
+    return {PocketClientResult::InvalidResponse};
+  }
+  GatewayResponse gateway{};
+  GatewayRequest request{};
+  request.method = GatewayMethod::Get;
+  request.path = path;
+  request.bearer = bearer;
+  request.successSink = &sink;
+  request.successSinkMaximumBytes = item.bytes;
+  request.successMediaType = GatewaySuccessMediaType::Epub;
+  request.timeoutMs = READING_DOWNLOAD_TIMEOUT_MS;
+  PocketClientOutcome outcome = execute(request, cancelled, gateway);
+  if (outcome.result == PocketClientResult::Success && gateway.httpStatus != 200) {
+    outcome.result = PocketClientResult::InvalidResponse;
+  }
+  secureClear(&gateway, sizeof(gateway));
+  secureClear(path, sizeof(path));
+  return outcome;
+}
+
 const char* pocketClientResultName(const PocketClientResult result) {
   switch (result) {
     case PocketClientResult::Success:
@@ -352,6 +406,8 @@ const char* gatewayTransportResultName(const GatewayTransportResult result) {
       return "oversized_response";
     case GatewayTransportResult::ReadFailure:
       return "read_failure";
+    case GatewayTransportResult::StorageFailure:
+      return "storage_failure";
   }
   return "unknown";
 }
