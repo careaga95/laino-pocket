@@ -12,8 +12,8 @@
 #include "PocketCredentialStore.h"
 #include "PocketPairingClient.h"
 #include "PocketPairingProtocol.h"
-#include "PocketPairingWorker.h"
 #include "PocketPairingTransportPolicy.h"
+#include "PocketPairingWorker.h"
 
 namespace {
 
@@ -281,14 +281,14 @@ TEST(PocketPairingParserTest, SensitiveStartScratchNeverPublishesPartialOrInvali
   pocket::PairingStartResponse destination{};
   std::memset(&destination, 0x5a, sizeof(destination));
   const pocket::PairingStartResponse original = destination;
-  const std::string partial = std::string("{\"protocol\":1,\"device_code\":\"") + DEVICE_CODE +
-                              "\",\"user_code\":\"ABCD";
+  const std::string partial =
+      std::string("{\"protocol\":1,\"device_code\":\"") + DEVICE_CODE + "\",\"user_code\":\"ABCD";
   EXPECT_EQ(pocket::parsePairingStartResponse(partial.data(), partial.size(), destination),
             pocket::JsonParseResult::InvalidSchema);
   EXPECT_EQ(std::memcmp(&destination, &original, sizeof(destination)), 0);
 
-  const std::string duplicate = std::string("{\"protocol\":1,\"device_code\":\"") + DEVICE_CODE +
-                                "\",\"device_code\":\"" + DEVICE_CODE + "\"}";
+  const std::string duplicate =
+      std::string("{\"protocol\":1,\"device_code\":\"") + DEVICE_CODE + "\",\"device_code\":\"" + DEVICE_CODE + "\"}";
   EXPECT_EQ(pocket::parsePairingStartResponse(duplicate.data(), duplicate.size(), destination),
             pocket::JsonParseResult::InvalidSchema);
   EXPECT_EQ(std::memcmp(&destination, &original, sizeof(destination)), 0);
@@ -355,8 +355,9 @@ TEST(PocketPairingParserTest, SensitiveFinalizeScratchNeverPublishesPartialBeare
             pocket::JsonParseResult::InvalidSchema);
   EXPECT_EQ(std::memcmp(&destination, &original, sizeof(destination)), 0);
 
-  const std::string wrongType = std::string("{\"protocol\":1,\"access_token\":7,\"token_type\":\"Bearer\","
-                                            "\"device_id\":\"") +
+  const std::string wrongType = std::string(
+                                    "{\"protocol\":1,\"access_token\":7,\"token_type\":\"Bearer\","
+                                    "\"device_id\":\"") +
                                 UUID + "\",\"scope\":\"pocket.device.read\"}";
   EXPECT_EQ(pocket::parsePairingFinalizeResponse(wrongType.data(), wrongType.size(), destination),
             pocket::JsonParseResult::InvalidSchema);
@@ -591,8 +592,8 @@ TEST(PocketPairingClientTest, DeviceCodeAndBearerNeverAppearInUrls) {
 
 TEST(PocketBundleClientTest, UsesExactAuthenticatedPathAndAcceptsNormativeBundle) {
   FakeGateway gateway;
-  gateway.json(200,
-               R"({"protocolVersion":1,"cards":[{"label":"Laino","title":"Today","subtitle":"Ready","lines":["One"]}]})");
+  gateway.json(
+      200, R"({"protocolVersion":1,"cards":[{"label":"Laino","title":"Today","subtitle":"Ready","lines":["One"]}]})");
   pocket::PairingClient client(gateway);
   std::atomic<bool> cancelled{false};
   char json[pocket::MAX_JSON_DOCUMENT_BYTES + 1]{};
@@ -612,8 +613,8 @@ TEST(PocketBundleClientTest, UsesExactAuthenticatedPathAndAcceptsNormativeBundle
 TEST(PocketBundleClientTest, RejectsMoreThanFourCardsAndInvalidOutputCapacity) {
   FakeGateway gateway;
   const std::string card = R"({"label":"L","title":"T","subtitle":"S","lines":[]})";
-  gateway.json(200, std::string("{\"protocolVersion\":1,\"cards\":[") + card + "," + card + "," + card +
-                        "," + card + "," + card + "]}");
+  gateway.json(200, std::string("{\"protocolVersion\":1,\"cards\":[") + card + "," + card + "," + card + "," + card +
+                        "," + card + "]}");
   pocket::PairingClient client(gateway);
   std::atomic<bool> cancelled{false};
   char json[pocket::MAX_JSON_DOCUMENT_BYTES + 1]{};
@@ -713,8 +714,7 @@ TEST(PocketPairingClientTest, AcceptsOnlyExactStatusAndNormativeErrorCodePairs) 
   std::atomic<bool> cancelled{false};
   for (const Case& item : CASES) {
     gateway.json(item.status, std::string("{\"error\":\"") + item.error + "\"}", item.retryAfter);
-    EXPECT_EQ(client.poll(DEVICE_CODE, cancelled, response).result, item.expected)
-        << item.status << " " << item.error;
+    EXPECT_EQ(client.poll(DEVICE_CODE, cancelled, response).result, item.expected) << item.status << " " << item.error;
   }
 
   gateway.json(500, "{\"error\":\"device_revoked\"}");
@@ -787,7 +787,7 @@ TEST(PocketPairingWorkerTest, UnpairOnlyTreatsThreeDefinedOutcomesAsRemoteResolu
 TEST(PocketPairingWorkerTest, WorkerContextOutlivesOwnerUntilOrderedTeardown) {
   auto* context = new pocket::PairingWorkerContext();
   ASSERT_TRUE(context->lifecycle.begin());
-  context->addReference();  // The real task acquires this before xTaskCreate.
+  context->addReference();      // The real task acquires this before xTaskCreate.
   context->releaseReference();  // Simulate an externally destroyed Activity owner.
   context->cancelled.store(true, std::memory_order_release);
   context->lifecycle.requestCancel();
@@ -815,8 +815,7 @@ TEST(PocketPairingTransportPolicyTest, CancellationAndTotalDeadlineUseProduction
       pocket::TransportCheckpoint::BeforeRequest, pocket::TransportCheckpoint::DnsWait,
       pocket::TransportCheckpoint::ResponseRead, pocket::TransportCheckpoint::BetweenPolls};
   for (const auto checkpoint : CHECKPOINTS) {
-    EXPECT_EQ(pocket::checkTransportControl(checkpoint, true, 0),
-              pocket::TransportControlDecision::Cancelled);
+    EXPECT_EQ(pocket::checkTransportControl(checkpoint, true, 0), pocket::TransportControlDecision::Cancelled);
   }
   EXPECT_EQ(pocket::checkTransportControl(pocket::TransportCheckpoint::ResponseRead, false, 12999),
             pocket::TransportControlDecision::Continue);
@@ -841,8 +840,8 @@ TEST(PocketPairingTransportPolicyTest, RejectsRedirectAmbiguousFramingOversizeAn
 }
 
 TEST(PocketPairingTransportPolicyTest, LargeSuccessBodyIsExplicitlyBoundedToSnapshotContract) {
-  const pocket::ResponseEnvelope exact{
-      200, true, false, true, true, static_cast<int32_t>(pocket::POCKET_MAX_LARGE_RESPONSE_BODY_BYTES)};
+  const pocket::ResponseEnvelope exact{200,  true, false,
+                                       true, true, static_cast<int32_t>(pocket::POCKET_MAX_LARGE_RESPONSE_BODY_BYTES)};
   const pocket::ResponseEnvelope oversized{
       200, true, false, true, true, static_cast<int32_t>(pocket::POCKET_MAX_LARGE_RESPONSE_BODY_BYTES + 1)};
   EXPECT_EQ(pocket::validateResponseEnvelope(exact, pocket::POCKET_MAX_LARGE_RESPONSE_BODY_BYTES),
@@ -904,6 +903,17 @@ TEST(PocketInteractionTest, SyncIsAVisibleFrontButtonAndSideButtonsOwnListNaviga
   EXPECT_NE(source.find("const char* syncLabel"), std::string::npos);
   EXPECT_NE(source.find("tr(STR_POCKET_SYNC)"), std::string::npos);
   EXPECT_NE(source.find("GUI.drawSideButtonHints"), std::string::npos);
+  EXPECT_NE(source.find("snapshot.nextMeeting()"), std::string::npos);
+  EXPECT_NE(source.find("snapshot.priorityAt(0)"), std::string::npos);
+  EXPECT_NE(source.find("SnapshotSectionId::Waiting"), std::string::npos);
+  EXPECT_NE(source.find("SnapshotSectionId::Owe"), std::string::npos);
+  EXPECT_NE(source.find("tr(STR_POCKET_TOP_PRIORITY)"), std::string::npos);
+  EXPECT_NE(source.find("tr(STR_POCKET_NO_UPCOMING_MEETING)"), std::string::npos);
+  EXPECT_NE(source.find("tr(STR_POCKET_NOTHING_WAITING)"), std::string::npos);
+  EXPECT_NE(source.find("tr(STR_POCKET_NOTHING_OWED)"), std::string::npos);
+  EXPECT_NE(source.find("sectionFromToday"), std::string::npos);
+  EXPECT_NE(source.find("View::Sections"), std::string::npos);
+  EXPECT_NE(source.find("tr(STR_POCKET_LISTS)"), std::string::npos);
 }
 
 TEST(PocketPairingRenderingTest, UnpairWarningIsWrappedInsideTheDisplayInsteadOfDrawnAsOneLine) {
@@ -936,7 +946,6 @@ TEST(PocketPairingInteractionTest, UnpairConfirmationConnectsBeforeRemoteDelete)
   ASSERT_NE(stateEnd, std::string::npos);
   const std::string confirmCase = source.substr(state, stateEnd - state);
 
-  EXPECT_NE(confirmCase.find("requestOperationWithWifi(pocket::WorkerOperation::DeleteSelf)"),
-            std::string::npos);
+  EXPECT_NE(confirmCase.find("requestOperationWithWifi(pocket::WorkerOperation::DeleteSelf)"), std::string::npos);
   EXPECT_EQ(confirmCase.find("credentialStore.clear()"), std::string::npos);
 }

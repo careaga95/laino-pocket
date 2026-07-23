@@ -71,6 +71,7 @@ void PocketActivity::onEnter() {
   todaySelection = 0;
   sectionIndex = 0;
   itemIndex = 0;
+  detailFromToday = false;
   initialRenderComplete = false;
   reloadCredential();
   autoSyncPending = canSync() && wifiConnected() && refreshDue();
@@ -246,6 +247,7 @@ void PocketActivity::processWorkerResult() {
       todaySelection = 0;
       sectionIndex = 0;
       itemIndex = 0;
+      detailFromToday = false;
       syncNotice = SyncNotice::Updated;
       LOG_INF("PKT",
               "Snapshot sync stored slot=%s generation=%llu items=%u bytes=%u stack_margin=%lu heap=%lu/%lu min=%lu",
@@ -339,7 +341,10 @@ void PocketActivity::loop() {
     return;
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
-    goToday();
+    if (view == View::Today)
+      openSections();
+    else
+      goToday();
     return;
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
@@ -362,36 +367,168 @@ void PocketActivity::loop() {
   requestUpdate();
 }
 
-const pocket::SnapshotSection* PocketActivity::selectedSection() const {
-  return snapshot.sectionAt(view == View::Today ? todaySelection : sectionIndex);
-}
+const pocket::SnapshotSection* PocketActivity::selectedSection() const { return snapshot.sectionAt(sectionIndex); }
 
 const pocket::SnapshotItem* PocketActivity::selectedItem() const {
   const auto* section = selectedSection();
   return section == nullptr ? nullptr : snapshot.itemAt(*section, itemIndex);
 }
 
+size_t PocketActivity::todayItemCount() const { return static_cast<size_t>(TodaySlot::Count); }
+
+pocket::SnapshotSectionId PocketActivity::todaySectionIdAt(const size_t index) const {
+  switch (static_cast<TodaySlot>(index)) {
+    case TodaySlot::NextMeeting:
+      return pocket::SnapshotSectionId::Agenda;
+    case TodaySlot::TopPriority:
+      return pocket::SnapshotSectionId::Tasks;
+    case TodaySlot::Waiting:
+      return pocket::SnapshotSectionId::Waiting;
+    case TodaySlot::Owe:
+      return pocket::SnapshotSectionId::Owe;
+    case TodaySlot::Count:
+      break;
+  }
+  return pocket::SnapshotSectionId::Agenda;
+}
+
+const pocket::SnapshotSection* PocketActivity::sectionForId(const pocket::SnapshotSectionId id) const {
+  for (size_t index = 0; index < snapshot.sectionCount; ++index) {
+    const auto* section = snapshot.sectionAt(index);
+    if (section != nullptr && section->id == id) return section;
+  }
+  return nullptr;
+}
+
+const pocket::SnapshotItem* PocketActivity::todayItemAt(const size_t index) const {
+  switch (static_cast<TodaySlot>(index)) {
+    case TodaySlot::NextMeeting:
+      return snapshot.nextMeeting();
+    case TodaySlot::TopPriority:
+      return snapshot.priorityAt(0);
+    case TodaySlot::Waiting: {
+      const auto* section = sectionForId(pocket::SnapshotSectionId::Waiting);
+      return section == nullptr ? nullptr : snapshot.itemAt(*section, 0);
+    }
+    case TodaySlot::Owe: {
+      const auto* section = sectionForId(pocket::SnapshotSectionId::Owe);
+      return section == nullptr ? nullptr : snapshot.itemAt(*section, 0);
+    }
+    case TodaySlot::Count:
+      return nullptr;
+  }
+  return nullptr;
+}
+
+const pocket::SnapshotItem* PocketActivity::selectedTodayItem() const { return todayItemAt(todaySelection); }
+
+const char* PocketActivity::todaySlotLabel(const size_t index) const {
+  switch (static_cast<TodaySlot>(index)) {
+    case TodaySlot::NextMeeting:
+      return tr(STR_POCKET_NEXT_MEETING);
+    case TodaySlot::TopPriority:
+      return tr(STR_POCKET_TOP_PRIORITY);
+    case TodaySlot::Waiting:
+      return tr(STR_POCKET_WAITING);
+    case TodaySlot::Owe:
+      return tr(STR_POCKET_OWE);
+    case TodaySlot::Count:
+      return "";
+  }
+  return "";
+}
+
+const char* PocketActivity::todayEmptyLabel(const size_t index) const {
+  switch (static_cast<TodaySlot>(index)) {
+    case TodaySlot::NextMeeting:
+      return tr(STR_POCKET_NO_UPCOMING_MEETING);
+    case TodaySlot::TopPriority:
+      return tr(STR_POCKET_NO_TOP_PRIORITY);
+    case TodaySlot::Waiting:
+      return tr(STR_POCKET_NOTHING_WAITING);
+    case TodaySlot::Owe:
+      return tr(STR_POCKET_NOTHING_OWED);
+    case TodaySlot::Count:
+      return "";
+  }
+  return "";
+}
+
+bool PocketActivity::canOpenTodaySelection() const {
+  return selectedTodayItem() != nullptr || sectionForId(todaySectionIdAt(todaySelection)) != nullptr;
+}
+
+bool PocketActivity::selectSection(const pocket::SnapshotSectionId id) {
+  for (size_t candidate = 0; candidate < snapshot.sectionCount; ++candidate) {
+    const auto* section = snapshot.sectionAt(candidate);
+    if (section == nullptr || section->id != id) continue;
+    sectionIndex = candidate;
+    itemIndex = 0;
+    return true;
+  }
+  return false;
+}
+
+bool PocketActivity::selectItem(const pocket::SnapshotItem* item) {
+  if (item == nullptr) return false;
+  for (size_t candidateSection = 0; candidateSection < snapshot.sectionCount; ++candidateSection) {
+    const auto* section = snapshot.sectionAt(candidateSection);
+    if (section == nullptr) continue;
+    for (size_t candidateItem = 0; candidateItem < section->itemCount; ++candidateItem) {
+      if (snapshot.itemAt(*section, candidateItem) != item) continue;
+      sectionIndex = candidateSection;
+      itemIndex = candidateItem;
+      return true;
+    }
+  }
+  return false;
+}
+
 void PocketActivity::moveSelection(const int delta) {
   if (view == View::Detail) return;
   syncNotice = SyncNotice::None;
-  size_t& selection = view == View::Today ? todaySelection : itemIndex;
-  const auto* section = selectedSection();
-  const size_t count = view == View::Today ? snapshot.sectionCount : section == nullptr ? 0 : section->itemCount;
-  if (delta < 0 && selection > 0)
-    --selection;
-  else if (delta > 0 && selection + 1 < count)
-    ++selection;
+  size_t* selection = nullptr;
+  size_t count = 0;
+  if (view == View::Today) {
+    selection = &todaySelection;
+    count = todayItemCount();
+  } else if (view == View::Sections) {
+    selection = &sectionIndex;
+    count = snapshot.sectionCount;
+  } else {
+    selection = &itemIndex;
+    const auto* section = selectedSection();
+    count = section == nullptr ? 0 : section->itemCount;
+  }
+  if (selection == nullptr) return;
+  if (delta < 0 && *selection > 0)
+    --*selection;
+  else if (delta > 0 && *selection + 1 < count)
+    ++*selection;
 }
 
 void PocketActivity::openSelection() {
   syncNotice = SyncNotice::None;
   if (view == View::Today) {
-    const auto* section = selectedSection();
-    if (section == nullptr) return;
-    sectionIndex = todaySelection;
+    const auto* item = selectedTodayItem();
+    if (item != nullptr) {
+      if (!selectItem(item)) return;
+      detailFromToday = true;
+      sectionFromToday = false;
+      view = View::Detail;
+    } else {
+      if (!selectSection(todaySectionIdAt(todaySelection))) return;
+      detailFromToday = false;
+      sectionFromToday = true;
+      view = View::Section;
+    }
+  } else if (view == View::Sections) {
+    if (selectedSection() == nullptr) return;
     itemIndex = 0;
+    sectionFromToday = false;
     view = View::Section;
   } else if (view == View::Section && selectedItem() != nullptr) {
+    detailFromToday = false;
     view = View::Detail;
   } else {
     return;
@@ -402,10 +539,14 @@ void PocketActivity::openSelection() {
 void PocketActivity::goBack() {
   syncNotice = SyncNotice::None;
   if (view == View::Detail) {
-    view = View::Section;
+    view = detailFromToday ? View::Today : View::Section;
+    detailFromToday = false;
     requestUpdate();
   } else if (view == View::Section) {
-    todaySelection = sectionIndex;
+    view = sectionFromToday ? View::Today : View::Sections;
+    sectionFromToday = false;
+    requestUpdate();
+  } else if (view == View::Sections) {
     view = View::Today;
     requestUpdate();
   } else {
@@ -413,10 +554,20 @@ void PocketActivity::goBack() {
   }
 }
 
+void PocketActivity::openSections() {
+  if (view != View::Today) return;
+  view = View::Sections;
+  sectionFromToday = false;
+  syncNotice = SyncNotice::None;
+  requestUpdate();
+}
+
 void PocketActivity::goToday() {
   if (view == View::Today) return;
   view = View::Today;
-  todaySelection = sectionIndex;
+  if (todaySelection >= todayItemCount()) todaySelection = 0;
+  detailFromToday = false;
+  sectionFromToday = false;
   syncNotice = SyncNotice::None;
   requestUpdate();
 }
@@ -443,6 +594,20 @@ const char* PocketActivity::headerLabel() const {
       return tr(STR_LAINO_POCKET);
   }
   return tr(STR_LAINO_POCKET);
+}
+
+const char* PocketActivity::sectionLabel(const pocket::SnapshotSection& section) const {
+  switch (section.id) {
+    case pocket::SnapshotSectionId::Agenda:
+      return tr(STR_POCKET_AGENDA);
+    case pocket::SnapshotSectionId::Tasks:
+      return tr(STR_POCKET_TASKS);
+    case pocket::SnapshotSectionId::Waiting:
+      return tr(STR_POCKET_WAITING);
+    case pocket::SnapshotSectionId::Owe:
+      return tr(STR_POCKET_OWE);
+  }
+  return section.label;
 }
 
 void PocketActivity::formatFreshness(char* buffer, const size_t capacity) const {
@@ -472,11 +637,41 @@ void PocketActivity::formatFreshness(char* buffer, const size_t capacity) const 
 }
 
 void PocketActivity::renderToday(const Rect& content) {
+  uint32_t totals[pocket::MAX_SNAPSHOT_SECTIONS]{};
+  for (size_t index = 0; index < snapshot.sectionCount; ++index) {
+    const auto* section = snapshot.sectionAt(index);
+    if (section != nullptr) totals[static_cast<size_t>(section->id)] = section->total;
+  }
+  char leftCounts[64];
+  char rightCounts[64];
+  std::snprintf(leftCounts, sizeof(leftCounts), tr(STR_POCKET_TODAY_AGENDA_TASKS_FORMAT),
+                static_cast<unsigned long>(totals[static_cast<size_t>(pocket::SnapshotSectionId::Agenda)]),
+                static_cast<unsigned long>(totals[static_cast<size_t>(pocket::SnapshotSectionId::Tasks)]));
+  std::snprintf(rightCounts, sizeof(rightCounts), tr(STR_POCKET_TODAY_WAITING_OWE_FORMAT),
+                static_cast<unsigned long>(totals[static_cast<size_t>(pocket::SnapshotSectionId::Waiting)]),
+                static_cast<unsigned long>(totals[static_cast<size_t>(pocket::SnapshotSectionId::Owe)]));
+
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int summaryHeight = metrics.tabBarHeight;
+  GUI.drawSubHeader(renderer, Rect{content.x, content.y, content.width, summaryHeight}, leftCounts, rightCounts);
+  const Rect list{content.x, content.y + summaryHeight, content.width, std::max(0, content.height - summaryHeight)};
+  const size_t count = todayItemCount();
+
   GUI.drawList(
-      renderer, content, snapshot.sectionCount, static_cast<int>(todaySelection),
+      renderer, list, count, static_cast<int>(todaySelection),
+      [this](const int index) -> std::string { return todaySlotLabel(static_cast<size_t>(index)); },
+      [this](const int index) -> std::string {
+        const auto* item = todayItemAt(static_cast<size_t>(index));
+        return item == nullptr ? todayEmptyLabel(static_cast<size_t>(index)) : item->title;
+      });
+}
+
+void PocketActivity::renderSections(const Rect& content) {
+  GUI.drawList(
+      renderer, content, snapshot.sectionCount, static_cast<int>(sectionIndex),
       [this](const int index) -> std::string {
         const auto* section = snapshot.sectionAt(index);
-        return section == nullptr ? "" : section->label;
+        return section == nullptr ? "" : sectionLabel(*section);
       },
       [this](const int index) -> std::string {
         const auto* section = snapshot.sectionAt(index);
@@ -551,9 +746,15 @@ void PocketActivity::render(RenderLock&&) {
   char freshness[80];
   formatFreshness(freshness, sizeof(freshness));
   const char* title = headerLabel();
-  if (syncNotice == SyncNotice::None && view != View::Today) {
-    const auto* section = selectedSection();
-    if (section != nullptr) title = section->label;
+  if (syncNotice == SyncNotice::None) {
+    if (view == View::Today)
+      title = tr(STR_POCKET_TODAY);
+    else if (view == View::Sections)
+      title = tr(STR_POCKET_LISTS);
+    else {
+      const auto* section = selectedSection();
+      if (section != nullptr) title = sectionLabel(*section);
+    }
   }
   if (headerWidth > 0 && metrics.headerHeight > 0) {
     GUI.drawHeader(renderer, Rect{safeLeft, headerY, headerWidth, metrics.headerHeight}, title,
@@ -569,23 +770,28 @@ void PocketActivity::render(RenderLock&&) {
                               true);
   } else if (view == View::Today)
     renderToday(content);
+  else if (view == View::Sections)
+    renderSections(content);
   else if (view == View::Section)
     renderSection(content);
   else
     renderDetail(content);
 
   const auto* section = selectedSection();
-  const size_t selection = view == View::Today ? todaySelection : itemIndex;
-  const size_t selectionCount = view == View::Today  ? snapshot.sectionCount
-                                : section == nullptr ? 0
-                                                     : section->itemCount;
-  const bool canOpen =
-      view == View::Today ? selectedSection() != nullptr : view == View::Section && selectedItem() != nullptr;
+  const size_t selection = view == View::Today ? todaySelection : view == View::Sections ? sectionIndex : itemIndex;
+  const size_t selectionCount = view == View::Today      ? todayItemCount()
+                                : view == View::Sections ? snapshot.sectionCount
+                                : section == nullptr     ? 0
+                                                         : section->itemCount;
+  const bool canOpen = view == View::Today      ? canOpenTodaySelection()
+                       : view == View::Sections ? selectedSection() != nullptr
+                       : view == View::Section  ? selectedItem() != nullptr
+                                                : false;
   const char* previousLabel = !workerRunning && view != View::Detail && selection > 0 ? tr(STR_POCKET_PREVIOUS) : "";
   const char* nextLabel =
       !workerRunning && view != View::Detail && selection + 1 < selectionCount ? tr(STR_POCKET_NEXT) : "";
   const char* confirmLabel = workerRunning ? "" : !canSync() ? tr(STR_POCKET_HARI) : canOpen ? tr(STR_OPEN) : "";
-  const char* todayLabel = !workerRunning && view != View::Today ? tr(STR_POCKET_TODAY) : "";
+  const char* todayLabel = workerRunning ? "" : view == View::Today ? tr(STR_POCKET_LISTS) : tr(STR_POCKET_TODAY);
   const char* syncLabel = workerRunning ? "" : canSync() ? tr(STR_POCKET_SYNC) : tr(STR_POCKET_HARI);
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, todayLabel, syncLabel);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
